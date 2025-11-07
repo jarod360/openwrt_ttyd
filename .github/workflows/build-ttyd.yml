@@ -155,6 +155,7 @@ jobs:
           file upload/* 2>/dev/null || echo "No files in upload directory"
 
       - name: Generate release info
+        id: release_info
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
@@ -203,19 +204,22 @@ jobs:
           echo "\`\`\`" >> upload/RELEASE_INFO.md
           ls -la upload/ >> upload/RELEASE_INFO.md
           echo "\`\`\`" >> upload/RELEASE_INFO.md
+          
+          echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "ttyd-https-$(date +%Y%m%d-%H%M%S)"
-          name: "TTYD HTTPS Build $(date +'%Y-%m-%d %H:%M')"
-          body_path: ${{ env.SDK_DIR }}/upload/RELEASE_INFO.md
-          files: |
-            ${{ env.SDK_DIR }}/upload/*.ipk
-            ${{ env.SDK_DIR }}/upload/ttyd
-          prerelease: true
-          draft: false
+        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
+        run: |
+          BUILD_TAG="build-$(date +%Y%m%d-%H%M%S)"
+          echo "Creating release with tag: $BUILD_TAG"
+          gh release create "$BUILD_TAG" \
+            --title "TTYD HTTPS Build $(date +'%Y-%m-%d %H:%M')" \
+            --notes-file ${{ env.SDK_DIR }}/upload/RELEASE_INFO.md \
+            ${{ env.SDK_DIR }}/upload/*.ipk \
+            ${{ env.SDK_DIR }}/upload/ttyd \
+            --prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts to GitHub
         uses: actions/upload-artifact@v4
