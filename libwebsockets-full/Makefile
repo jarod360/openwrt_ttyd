@@ -1,65 +1,113 @@
 #
-# Copyright (C) 2025 Jarod
-# Modified OpenWrt Makefile for libwebsockets with full SSL/TLS support
+# Copyright (C) 2014-2015 OpenWrt.org
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
 #
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=libwebsockets-full
+PKG_NAME:=libwebsockets
 PKG_VERSION:=4.3.3
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://github.com/warmcat/libwebsockets.git
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION)
+PKG_SOURCE_URL:=https://codeload.github.com/warmcat/libwebsockets/tar.gz/v$(PKG_VERSION)?
+PKG_HASH:=6fd33527b410a37ebc91bb64ca51bdabab12b076bc99d153d7c5dd405e4bdf90
+
 PKG_SOURCE_VERSION:=v$(PKG_VERSION)
-PKG_MIRROR_HASH:=skip
 
-PKG_MAINTAINER:=Jarod <jarod@example.com>
-PKG_LICENSE:=LGPL-2.1
+PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
-PKG_CPE_ID:=cpe:/a:libwebsockets:libwebsockets
 
-PKG_BUILD_PARALLEL:=1
-PKG_INSTALL:=1
+PKG_BUILD_DEPENDS:=libubox
+
+CMAKE_INSTALL:=1
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
 
+CMAKE_OPTIONS += -DLWS_IPV6=$(if $(CONFIG_IPV6),ON,OFF)
+CMAKE_OPTIONS += -DISABLE_WERROR=ON
+CMAKE_OPTIONS += -DCMAKE_BUILD_TYPE=Release
+CMAKE_OPTIONS += -DLWS_WITH_EXTERNAL_POLL=ON
+CMAKE_OPTIONS += -DLWS_WITH_ULOOP=ON
+
+# turn off all test apps
+CMAKE_OPTIONS += -DLWS_WITHOUT_TESTAPPS=ON
+CMAKE_OPTIONS += -DLWS_WITHOUT_TEST_SERVER=ON
+CMAKE_OPTIONS += -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON
+CMAKE_OPTIONS += -DLWS_WITHOUT_TEST_PING=ON
+CMAKE_OPTIONS += -DLWS_WITHOUT_TEST_CLIENT=ON
+
+define Package/libwebsockets/Default
+	SECTION:=libs
+	CATEGORY:=Libraries
+	TITLE:=libwebsockets
+	DEPENDS:=+zlib +libcap +libubox
+	URL:=https://libwebsockets.org
+	MAINTAINER:=Karl Palsson <karlp@etactica.com>
+endef
+
+define Package/libwebsockets-openssl
+	$(call Package/libwebsockets/Default)
+	TITLE += (OpenSSL)
+	DEPENDS += +libopenssl
+	VARIANT:=openssl
+	CONFLICTS:=libwebsockets-full
+endef
+
+define Package/libwebsockets-mbedtls
+	$(call Package/$(PKG_NAME)/Default)
+	TITLE += (mbedTLS)
+	DEPENDS += +libmbedtls
+	VARIANT:=mbedtls
+	PROVIDES:=libwebsockets
+	CONFLICTS:=libwebsockets-openssl
+endef
+
 define Package/libwebsockets-full
-  SECTION:=libs
-  CATEGORY:=Libraries
-  TITLE:=Full-featured libwebsockets (with SSL/TLS, HTTP/2)
-  URL:=https://libwebsockets.org
-  DEPENDS:=+libopenssl +libuv +zlib
+	$(call Package/libwebsockets/Default)
+	TITLE += (Full - OpenSSL, libuv, plugins, CGI)
+	DEPENDS += +libopenssl +libuv
+	VARIANT:=full
+	PROVIDES:=libwebsockets libwebsockets-openssl
 endef
 
-define Package/libwebsockets-full/description
-libwebsockets is a lightweight pure C library providing
-fully featured WebSockets, HTTP/2, and TLS (OpenSSL) support.
+ifeq ($(BUILD_VARIANT),openssl)
+    CMAKE_OPTIONS += -DLWS_OPENSSL_CLIENT_CERTS=/etc/ssl/certs
+    CMAKE_OPTIONS += -DLWS_WITH_SSL=ON
+endif
 
-This "full" version enables SSL/TLS, HTTP/2, IPv6,
-permessage-deflate, and websocket extensions.
+ifeq ($(BUILD_VARIANT),mbedtls)
+    CMAKE_OPTIONS += -DLWS_WITH_MBEDTLS=1
+endif
+
+ifeq ($(BUILD_VARIANT),full)
+    CMAKE_OPTIONS += -DLWS_OPENSSL_CLIENT_CERTS=/etc/ssl/certs
+    CMAKE_OPTIONS += -DLWS_WITH_SSL=ON
+    CMAKE_OPTIONS += -DLWS_WITH_LIBUV=ON
+    CMAKE_OPTIONS += -DLWS_WITH_PLUGINS=ON
+    CMAKE_OPTIONS += -DLWS_WITH_SERVER_STATUS=ON
+    CMAKE_OPTIONS += -DLWS_WITH_ACCESS_LOG=ON
+    CMAKE_OPTIONS += -DLWS_WITH_CGI=ON
+    CMAKE_OPTIONS += -DLWS_UNIX_SOCK=ON
+endif
+
+define Package/libwebsockets/install
+	$(INSTALL_DIR) $(1)/usr/lib
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libwebsockets*.so* $(1)/usr/lib/
 endef
 
-CMAKE_OPTIONS += \
-	-DLWS_WITH_SSL=ON \
-	-DLWS_WITH_HTTP2=ON \
-	-DLWS_WITH_HTTP_STREAM_COMPRESSION=ON \
-	-DLWS_WITH_ZLIB=ON \
-	-DLWS_WITHOUT_EXTENSIONS=OFF \
-	-DLWS_WITH_IPV6=ON \
-	-DLWS_WITH_SOCKS5=ON \
-	-DLWS_WITH_PLUGINS=ON \
-	-DLWS_WITH_STATIC=OFF \
-	-DLWS_OPENSSL_INCLUDE_DIRS=$(STAGING_DIR)/usr/include \
-	-DLWS_OPENSSL_LIBRARIES=$(STAGING_DIR)/usr/lib \
-	-DLWS_WITH_MBEDTLS=OFF \
-	-DLWS_WITH_SHARED=ON \
-	-DCMAKE_BUILD_TYPE=Release
+Package/libwebsockets-mbedtls/install = $(Package/libwebsockets/install)
+Package/libwebsockets-openssl/install = $(Package/libwebsockets/install)
 
 define Package/libwebsockets-full/install
-	$(INSTALL_DIR) $(1)/usr/lib
-	$(CP) $(PKG_BUILD_DIR)/lib/libwebsockets.so* $(1)/usr/lib/
+	$(call Package/libwebsockets/install,$(1))
+	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libwebsockets-evlib_uv.so* $(1)/usr/lib
 endef
 
+$(eval $(call BuildPackage,libwebsockets-openssl))
+$(eval $(call BuildPackage,libwebsockets-mbedtls))
 $(eval $(call BuildPackage,libwebsockets-full))
