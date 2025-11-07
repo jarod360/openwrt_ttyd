@@ -1,4 +1,4 @@
-name: Build TTYD with HTTPS for RK3568
+name: Build TTYD with HTTPS (TLS) for RK3568
 
 on:
   push:
@@ -16,18 +16,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y build-essential gawk gettext libncurses5-dev unzip zlib1g-dev libssl-dev python3 rsync wget
+          sudo apt-get install -y \
+            build-essential gawk gettext libncurses5-dev unzip \
+            zlib1g-dev libssl-dev python3 rsync wget git cmake ninja-build
 
-      - name: Download OpenWrt SDK
+      - name: Download and extract OpenWrt SDK
         run: |
           wget -q ${{ env.SDK_URL }}
-          mkdir sdk && tar -xJf openwrt-sdk-*.tar.xz -C sdk --strip-components=1
+          mkdir sdk
+          tar -xJf openwrt-sdk-*.tar.xz -C sdk --strip-components=1
           echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
 
       - name: Copy custom packages
@@ -36,38 +39,78 @@ jobs:
           cp -r ttyd $SDK_DIR/package/
           echo "✅ Packages copied"
 
-      - name: Configure OpenWrt SDK
+      - name: Setup feeds and configuration
         run: |
           cd $SDK_DIR
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cat > .config <<EOF
-          CONFIG_TARGET_rockchip_armv8=y
-          CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
-          CONFIG_PACKAGE_libwebsockets-full=m
-          CONFIG_PACKAGE_ttyd=m
-          EOF
+CONFIG_TARGET_rockchip_armv8=y
+CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
+CONFIG_PACKAGE_libwebsockets-full=m
+CONFIG_PACKAGE_ttyd=m
+CONFIG_AUTOREMOVE=y
+EOF
           make defconfig
 
-      - name: Compile packages
+      - name: Compile libwebsockets-full (OpenSSL variant)
         run: |
           cd $SDK_DIR
-          make package/libwebsockets-full/compile -j$(nproc) V=s
+          make package/libwebsockets-full/clean V=s
+          make package/libwebsockets-full/compile BUILD_VARIANT=openssl -j$(nproc) V=s
+
+      - name: Compile ttyd
+        run: |
+          cd $SDK_DIR
+          make package/ttyd/clean V=s
           make package/ttyd/compile -j$(nproc) V=s
 
-      - name: Collect IPK
+      - name: Collect build artifacts
         run: |
           cd $SDK_DIR
-          mkdir upload
-          find bin -name "*.ipk" -exec cp {} upload/ \;
+          mkdir -p upload
+          find bin -name "*ttyd*.ipk" -exec cp {} upload/ \;
+          find bin -name "*libwebsockets*.ipk" -exec cp {} upload/ \;
           ls -lh upload
 
-      - name: Release build
+      - name: Generate release notes
         run: |
-          TAG="ttyd-https-$(date +%Y%m%d-%H%M)"
+          cd $SDK_DIR
+          {
+            echo "## 🌐 TTYD (HTTPS/TLS) Build for RK3568"
+            echo "**Build Date:** $(date)"
+            echo "**Target:** OpenWrt 23.05.3 (Rockchip ARMv8)"
+            echo "**Packages:**"
+            echo "- ttyd (with TLS/SSL support)"
+            echo "- libwebsockets-full (OpenSSL)"
+            echo ""
+            echo "### Installation"
+            echo "1. Upload the IPK files to your device"
+            echo "2. Run:"
+            echo "   \`\`\`bash"
+            echo "   opkg install libwebsockets-full_*.ipk ttyd_*.ipk"
+            echo "   \`\`\`"
+            echo "3. Start HTTPS server:"
+            echo "   \`\`\`bash"
+            echo "   mkdir -p /etc/ssl && \\"
+            echo "   openssl req -x509 -newkey rsa:2048 -keyout /etc/ssl/ttyd.key -out /etc/ssl/ttyd.crt -days 365 -nodes -subj '/CN=localhost' && \\"
+            echo "   ttyd --ssl --ssl-cert /etc/ssl/ttyd.crt --ssl-key /etc/ssl/ttyd.key bash"
+            echo "   \`\`\`"
+          } > upload/RELEASE_INFO.md
+
+      - name: Create GitHub Release
+        run: |
+          TAG="ttyd-https-$(date +%Y%m%d-%H%M%S)"
           gh release create "$TAG" \
             --title "TTyD HTTPS Build $(date '+%F %H:%M')" \
-            --notes "TTyD with HTTPS (TLS) support for RK3568" \
-            upload/*.ipk
+            --notes-file ${{ env.SDK_DIR }}/upload/RELEASE_INFO.md \
+            ${{ env.SDK_DIR }}/upload/*.ipk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttyd-https-ipk
+          path: ${{ env.SDK_DIR }}/upload/*.ipk
+          if-no-files-found: warn
