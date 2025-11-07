@@ -44,7 +44,7 @@ jobs:
           cd $SDK_DIR
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          cat > .config <<EOF
+          cat > .config <<'EOF'
 CONFIG_TARGET_rockchip_armv8=y
 CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
 CONFIG_PACKAGE_libwebsockets-full=m
@@ -76,41 +76,17 @@ EOF
       - name: Generate release notes
         run: |
           cd $SDK_DIR
-          {
-            echo "## 🌐 TTYD (HTTPS/TLS) Build for RK3568"
-            echo "**Build Date:** $(date)"
-            echo "**Target:** OpenWrt 23.05.3 (Rockchip ARMv8)"
-            echo "**Packages:**"
-            echo "- ttyd (with TLS/SSL support)"
-            echo "- libwebsockets-full (OpenSSL)"
-            echo ""
-            echo "### Installation"
-            echo "1. Upload the IPK files to your device"
-            echo "2. Run:"
-            echo "   \`\`\`bash"
-            echo "   opkg install libwebsockets-full_*.ipk ttyd_*.ipk"
-            echo "   \`\`\`"
-            echo "3. Start HTTPS server:"
-            echo "   \`\`\`bash"
-            echo "   mkdir -p /etc/ssl && \\"
-            echo "   openssl req -x509 -newkey rsa:2048 -keyout /etc/ssl/ttyd.key -out /etc/ssl/ttyd.crt -days 365 -nodes -subj '/CN=localhost' && \\"
-            echo "   ttyd --ssl --ssl-cert /etc/ssl/ttyd.crt --ssl-key /etc/ssl/ttyd.key bash"
-            echo "   \`\`\`"
-          } > upload/RELEASE_INFO.md
+          cat > upload/RELEASE_INFO.md <<'EOF'
+## 🌐 TTYD (HTTPS/TLS) Build for RK3568
 
-      - name: Create GitHub Release
-        run: |
-          TAG="ttyd-https-$(date +%Y%m%d-%H%M%S)"
-          gh release create "$TAG" \
-            --title "TTyD HTTPS Build $(date '+%F %H:%M')" \
-            --notes-file ${{ env.SDK_DIR }}/upload/RELEASE_INFO.md \
-            ${{ env.SDK_DIR }}/upload/*.ipk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+**Build Date:** $(date)
+**Target:** OpenWrt 23.05.3 (Rockchip ARMv8)
+**Packages:**
+- ttyd (with TLS/SSL support)
+- libwebsockets-full (OpenSSL)
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ttyd-https-ipk
-          path: ${{ env.SDK_DIR }}/upload/*.ipk
-          if-no-files-found: warn
+### Installation
+1. Upload the IPK files to your device
+2. Run:
+```bash
+opkg install libwebsockets-full_*.ipk ttyd_*.ipk
