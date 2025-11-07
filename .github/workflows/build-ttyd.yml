@@ -1,0 +1,73 @@
+name: Build TTYD with HTTPS for RK3568
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TZ: Asia/Shanghai
+  SDK_URL: https://downloads.openwrt.org/releases/23.05.3/targets/rockchip/armv8/openwrt-sdk-23.05.3-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y build-essential gawk gettext libncurses5-dev unzip zlib1g-dev libssl-dev python3 rsync wget
+
+      - name: Download OpenWrt SDK
+        run: |
+          wget -q ${{ env.SDK_URL }}
+          mkdir sdk && tar -xJf openwrt-sdk-*.tar.xz -C sdk --strip-components=1
+          echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
+
+      - name: Copy custom packages
+        run: |
+          cp -r libwebsockets-full $SDK_DIR/package/
+          cp -r ttyd $SDK_DIR/package/
+          echo "✅ Packages copied"
+
+      - name: Configure OpenWrt SDK
+        run: |
+          cd $SDK_DIR
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cat > .config <<EOF
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
+          CONFIG_PACKAGE_libwebsockets-full=m
+          CONFIG_PACKAGE_ttyd=m
+          EOF
+          make defconfig
+
+      - name: Compile packages
+        run: |
+          cd $SDK_DIR
+          make package/libwebsockets-full/compile -j$(nproc) V=s
+          make package/ttyd/compile -j$(nproc) V=s
+
+      - name: Collect IPK
+        run: |
+          cd $SDK_DIR
+          mkdir upload
+          find bin -name "*.ipk" -exec cp {} upload/ \;
+          ls -lh upload
+
+      - name: Release build
+        run: |
+          TAG="ttyd-https-$(date +%Y%m%d-%H%M)"
+          gh release create "$TAG" \
+            --title "TTyD HTTPS Build $(date '+%F %H:%M')" \
+            --notes "TTyD with HTTPS (TLS) support for RK3568" \
+            upload/*.ipk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
