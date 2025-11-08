@@ -72,6 +72,15 @@ jobs:
             exit 1
           fi
 
+          # 新增：复制 luci-app-ttyd 包
+          if [ -d "luci-app-ttyd" ]; then
+            cp -r luci-app-ttyd $SDK_DIR/package/
+            echo "✅ luci-app-ttyd package copied"
+          else
+            echo "❌ luci-app-ttyd directory not found"
+            exit 1
+          fi
+
       - name: SSH connection to Actions (debug)
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event.inputs.ssh == 'true' }}
@@ -88,6 +97,7 @@ jobs:
           echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
           
           make defconfig
 
@@ -96,6 +106,7 @@ jobs:
           cd $SDK_DIR
           make package/libwebsockets-full/download V=s
           make package/ttyd/download V=s
+          make package/luci-app-ttyd/download V=s
           find dl -size -1024c -exec ls -l {} \; || true
 
       - name: Compile libwebsockets-full
@@ -115,10 +126,19 @@ jobs:
           make package/ttyd/clean V=s
           make package/ttyd/compile -j$(nproc) V=s
           echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Compile luci-app-ttyd
+        id: compile_luci_app_ttyd
+        run: |
+          cd $SDK_DIR
+          echo "🚀 Starting luci-app-ttyd compilation..."
+          make package/luci-app-ttyd/clean V=s
+          make package/luci-app-ttyd/compile -j$(nproc) V=s
+          echo "status=success" >> $GITHUB_OUTPUT
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: Collect build artifacts
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
+        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           mkdir -p upload
@@ -132,6 +152,12 @@ jobs:
           
           find bin -name "*libwebsockets*.ipk" -type f | while read file; do
             echo "Found libwebsockets IPK: $file"
+            cp "$file" upload/
+          done
+
+          # 新增：查找 luci-app-ttyd IPK 文件
+          find bin -name "*luci-app-ttyd*.ipk" -type f | while read file; do
+            echo "Found luci-app-ttyd IPK: $file"
             cp "$file" upload/
           done
           
@@ -151,7 +177,7 @@ jobs:
 
       - name: Generate release info
         id: release_info
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
+        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           cat > upload/RELEASE_INFO.md << 'EOF'
@@ -167,16 +193,29 @@ jobs:
           ### Packages Included
           - **ttyd** - Share your terminal over the web with TLS/SSL support
           - **libwebsockets-full** - Full WebSocket library with OpenSSL support
+          - **luci-app-ttyd** - LuCI web interface for ttyd
           
           ### Installation Instructions
           1. Upload the IPK files to your RK3568 OpenWrt 21.02.1 device
-          2. Install packages:
+          2. Install packages (按顺序安装):
           ```bash
           opkg install libwebsockets-full_*.ipk
           opkg install ttyd_*.ipk
+          opkg install luci-app-ttyd_*.ipk
           ```
           
-          3. Generate SSL certificates and start HTTPS server:
+          3. 启用服务:
+          ```bash
+          /etc/init.d/ttyd enable
+          /etc/init.d/ttyd start
+          ```
+          
+          4. 通过 LuCI 界面配置 SSL:
+          - 访问 LuCI 管理界面
+          - 进入 "Services" -> "Terminal"
+          - 启用 SSL/TLS 并配置证书路径
+          
+          5. 或者手动生成 SSL 证书:
           ```bash
           # Create SSL directory
           mkdir -p /etc/ssl
@@ -192,7 +231,7 @@ jobs:
           ttyd --ssl --ssl-cert /etc/ssl/ttyd.crt --ssl-key /etc/ssl/ttyd.key bash
           ```
           
-          4. Access via browser: `https://your-device-ip:7681`
+          6. 通过浏览器访问: `https://your-device-ip:7681`
           
           ### File List
           EOF
@@ -204,16 +243,15 @@ jobs:
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
+        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
         run: |
-          BUILD_TAG="build-21.02.1-$(date +%Y%m%d-%H%M%S)"
+          BUILD_TAG="v21.02.1-$(date +%Y%m%d)"
           echo "Creating release with tag: $BUILD_TAG"
           gh release create "$BUILD_TAG" \
-            --title "TTYD HTTPS Build for RK3568 (OpenWrt 21.02.1) $(date +'%Y-%m-%d %H:%M')" \
+            --title "TTYD HTTPS Build for RK3568 (OpenWrt 21.02.1) $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
-            $SDK_DIR/upload/ttyd \
-            --prerelease
+            $SDK_DIR/upload/ttyd
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -236,3 +274,4 @@ jobs:
           echo "=== Build directories ==="
           find build_dir -name "*ttyd*" -type d | head -10
           find build_dir -name "*libwebsockets*" -type d | head -10
+          find build_dir -name "*luci-app-ttyd*" -type d | head -10
