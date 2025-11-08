@@ -31,7 +31,37 @@ validate_section_ttyd()
 		'ssl_key:file' \
 		'ssl_ca:file' \
 		'debug:uinteger' \
-		'command:string'
+		'command:string' \
+		'username:string' \
+		'password:string'
+}
+
+generate_self_signed_cert() {
+	local ssl_dir="/etc/ttyd"
+	local days="$1"
+	local bits="$2"
+	local country="$3"
+	local state="$4"
+	local locality="$5"
+	local organization="$6"
+	local organizational_unit="$7"
+	local commonname="$8"
+	
+	# 确保目录存在
+	mkdir -p "$ssl_dir"
+	
+	# 生成自签名证书
+	openssl req -new -newkey rsa:${bits} -days ${days} -nodes -x509 \
+		-keyout "${ssl_dir}/ttyd.key" -out "${ssl_dir}/ttyd.crt" \
+		-subj "/C=${country}/ST=${state}/L=${locality}/O=${organization}/OU=${organizational_unit}/CN=${commonname}" 2>/dev/null
+	
+	if [ $? -eq 0 ] && [ -f "${ssl_dir}/ttyd.key" ] && [ -f "${ssl_dir}/ttyd.crt" ]; then
+		echo "✅ Self-signed certificate generated successfully"
+		return 0
+	else
+		echo "❌ Failed to generate self-signed certificate"
+		return 1
+	fi
 }
 
 ttyd_instance()
@@ -43,6 +73,46 @@ ttyd_instance()
 
 	[ "$enable" = 0 ] && return 1
 	[ -z "$command" ] && return 1
+
+	# 处理基本认证
+	if [ -n "$username" ] && [ -n "$password" ]; then
+		credential="${username}:${password}"
+	fi
+
+	# 处理SSL证书
+	if [ "$ssl" = "1" ]; then
+		# 检查证书文件是否存在，如果不存在则生成自签名证书
+		if [ ! -f "$ssl_cert" ] || [ ! -f "$ssl_key" ]; then
+			echo "🔐 SSL enabled but certificate files not found, generating self-signed certificate..."
+			
+			# 读取SSL配置参数
+			config_load ttyd
+			config_get ssl_days ssl days "730"
+			config_get ssl_bits ssl bits "2048"
+			config_get ssl_country ssl country "CN"
+			config_get ssl_state ssl state ""
+			config_get ssl_locality ssl locality ""
+			config_get ssl_organization ssl organization ""
+			config_get ssl_organizational_unit ssl organizational_unit ""
+			config_get ssl_commonname ssl commonname "$(uci get system.@system[0].hostname 2>/dev/null || echo 'OpenWrt')"
+			
+			# 设置默认证书路径
+			ssl_cert="/etc/ttyd/ttyd.crt"
+			ssl_key="/etc/ttyd/ttyd.key"
+			
+			# 生成证书
+			generate_self_signed_cert "$ssl_days" "$ssl_bits" "$ssl_country" "$ssl_state" \
+				"$ssl_locality" "$ssl_organization" "$ssl_organizational_unit" "$ssl_commonname"
+		fi
+		
+		# 验证证书文件是否存在且可读
+		if [ ! -r "$ssl_cert" ] || [ ! -r "$ssl_key" ]; then
+			echo "❌ SSL certificate or key file not readable: $ssl_cert or $ssl_key"
+			return 1
+		fi
+		
+		echo "🔐 Using SSL certificate: $ssl_cert"
+	fi
 
 	[ "${interface::1}" = @ ] && {
 		interface=$(
@@ -84,12 +154,23 @@ ttyd_instance()
 	procd_append_param command $command
 	procd_set_param stdout 1
 	procd_set_param stderr 1
+	procd_set_param respawn
+	procd_set_param pidfile "/var/run/${NAME}.pid"
 	procd_close_instance
 }
 
 start_service() {
 	config_load "$NAME"
 	config_foreach validate_section_ttyd ttyd ttyd_instance
+}
+
+stop_service() {
+	service_stop "$NAME"
+}
+
+reload_service() {
+	stop_service
+	start_service
 }
 
 shutdown() {
