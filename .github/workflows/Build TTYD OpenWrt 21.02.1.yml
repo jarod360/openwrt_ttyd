@@ -115,8 +115,14 @@ jobs:
           cd $SDK_DIR
           echo "🚀 Starting libwebsockets-full compilation..."
           make package/libwebsockets-full/clean V=s
-          make package/libwebsockets-full/compile -j$(nproc) V=s
-          echo "status=success" >> $GITHUB_OUTPUT
+          if make package/libwebsockets-full/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ libwebsockets-full compiled successfully"
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "❌ libwebsockets-full compilation failed"
+            exit 1
+          fi
 
       - name: Compile ttyd
         id: compile_ttyd
@@ -124,8 +130,14 @@ jobs:
           cd $SDK_DIR
           echo "🚀 Starting ttyd compilation..."
           make package/ttyd/clean V=s
-          make package/ttyd/compile -j$(nproc) V=s
-          echo "status=success" >> $GITHUB_OUTPUT
+          if make package/ttyd/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ ttyd compiled successfully"
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "❌ ttyd compilation failed"
+            exit 1
+          fi
 
       - name: Compile luci-app-ttyd
         id: compile_luci_app_ttyd
@@ -133,8 +145,14 @@ jobs:
           cd $SDK_DIR
           echo "🚀 Starting luci-app-ttyd compilation..."
           make package/luci-app-ttyd/clean V=s
-          make package/luci-app-ttyd/compile -j$(nproc) V=s
-          echo "status=success" >> $GITHUB_OUTPUT
+          if make package/luci-app-ttyd/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ luci-app-ttyd compiled successfully"
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "❌ luci-app-ttyd compilation failed"
+            exit 1
+          fi
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: Collect build artifacts
@@ -242,16 +260,27 @@ jobs:
           
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Generate unique tag with date and random number
+        id: tag_generator
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
         run: |
-          BUILD_TAG="v21.02.1-$(date +%Y%m%d)"
-          echo "Creating release with tag: $BUILD_TAG"
-          gh release create "$BUILD_TAG" \
-            --title "TTYD HTTPS Build for RK3568 (OpenWrt 21.02.1) $(date +'%Y-%m-%d')" \
+          # 生成随机四位数
+          RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
+          # 构建标签：OpenWrt-ttyd-年月日-随机四位数
+          BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"
+          echo "Generated tag: $BUILD_TAG"
+          echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: steps.tag_generator.outputs.tag_name
+        run: |
+          echo "Creating release with tag: ${{ steps.tag_generator.outputs.tag_name }}"
+          gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
+            --title "OpenWrt 21.02.1 TTYD HTTPS Build for RK3568 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
-            $SDK_DIR/upload/ttyd
+            $SDK_DIR/upload/ttyd \
+            --prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
