@@ -8,43 +8,31 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ttyd
-PKG_VERSION:=1.7.3
-PKG_RELEASE:=2
+PKG_VERSION:=1.6.3
+PKG_RELEASE:=3
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/tsl0922/ttyd/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=c9cf5eece52d27c5d728000f11315d36cb400c6948d1964a34a7eae74b454099
+PKG_HASH:=1116419527edfe73717b71407fb6e06f46098fc8a8e6b0bb778c4c75dc9f64b9
 
 PKG_MAINTAINER:=Shuanglei Tao <tsl0922@gmail.com>
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
-PKG_CPE_ID:=cpe:/a:ttyd_project:ttyd
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
 
-# ✅ 启用 TLS/SSL 支持
-CMAKE_OPTIONS += \
-	-DUSE_OPENSSL=ON \
-	-DLWS_WITH_SSL=ON \
-	-DENABLE_SSL=ON \
-	-DLWS_OPENSSL_CLIENT_CERTS=/etc/ssl/certs \
-	-DLWS_DIR=$(STAGING_DIR)/usr \
-	-DLWS_LIBRARY_DIRS=$(STAGING_DIR)/usr/lib \
-	-DLWS_INCLUDE_DIRS=$(STAGING_DIR)/usr/include
-
 define Package/ttyd
 	SECTION:=utils
 	CATEGORY:=Utilities
-	TITLE:=Command-line tool for sharing terminal over the web (with HTTPS/TLS)
-	DEPENDS:=+libcap +libopenssl +libjson-c +libuv +zlib +libwebsockets-full
+	TITLE:=Command-line tool for sharing terminal over the web
+	DEPENDS:=+libopenssl +libjson-c +libuv +zlib +libwebsockets-full
 	URL:=https://github.com/tsl0922/ttyd
 	SUBMENU:=Terminal
 endef
 
 define Package/ttyd/description
 ttyd is a command-line tool for sharing terminal over the web.
-This build includes HTTPS/TLS support (via OpenSSL).
 endef
 
 define Package/ttyd/conffiles
@@ -54,10 +42,8 @@ endef
 define Package/ttyd/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/bin/ttyd $(1)/usr/bin/
-
 	$(INSTALL_DIR) $(1)/etc/config/
 	$(INSTALL_CONF) ./files/ttyd.config $(1)/etc/config/ttyd
-
 	$(INSTALL_DIR) $(1)/etc/init.d/
 	$(INSTALL_BIN) ./files/ttyd.init $(1)/etc/init.d/ttyd
 endef
