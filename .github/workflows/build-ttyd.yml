@@ -1,8 +1,6 @@
 name: Build TTYD with HTTPS (TLS) for RK3568
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       ssh:
@@ -16,59 +14,50 @@ permissions:
 
 env:
   TZ: Asia/Shanghai
-  SDK_URL: https://downloads.openwrt.org/releases/23.05.3/targets/rockchip/armv8/openwrt-sdk-23.05.3-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 LTS
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout LEDE source
+        run: |
+          git clone https://github.com/coolsnowwolf/lede.git lede-source
+          cd lede-source
+          echo "LEDE_DIR=$PWD" >> $GITHUB_ENV
+
       - name: Install build dependencies
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            build-essential ccache file g++ gawk gettext git \
-            libncurses5-dev libncursesw5-dev libssl-dev \
-            python3 python3-pip python3-setuptools rsync unzip wget \
-            zlib1g-dev zstd cmake ninja-build
+          sudo apt update -y
+          sudo apt full-upgrade -y
+          sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
+          genisoimage git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev \
+          libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev \
+          libreadline-dev libssl-dev libtool llvm lrzsz libnsl-dev ninja-build p7zip p7zip-full patch pkgconf \
+          python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
+          swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: Download and extract OpenWrt SDK
-        run: |
-          wget -q ${{ env.SDK_URL }}
-          file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
-          mkdir sdk
-          if [[ $file_name == *.tar.xz ]]; then
-            tar -xJf $file_name -C ./sdk --strip-components=1
-          elif [[ $file_name == *.tar.zst ]]; then
-            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
-          else
-            echo "Unsupported file format: $file_name"
-            exit 1
-          fi
-          echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
-
-      - name: Copy custom packages
+      - name: Copy custom packages to LEDE
         run: |
           # 检查包目录是否存在
           if [ -d "libwebsockets-full" ]; then
-            cp -r libwebsockets-full $SDK_DIR/package/
+            cp -r libwebsockets-full $LEDE_DIR/package/
             echo "✅ libwebsockets-full package copied"
           else
             echo "❌ libwebsockets-full directory not found"
-            find . -name "*libwebsockets*" -type d
             exit 1
           fi
           
           if [ -d "ttyd" ]; then
-            cp -r ttyd $SDK_DIR/package/
+            cp -r ttyd $LEDE_DIR/package/
             echo "✅ ttyd package copied"
           else
             echo "❌ ttyd directory not found"
-            find . -name "*ttyd*" -type d
             exit 1
           fi
 
@@ -76,19 +65,16 @@ jobs:
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event.inputs.ssh == 'true' }}
 
-      - name: Setup feeds and configuration
+      - name: Setup LEDE feeds and configuration
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 完整的配置设置
-          echo "CONFIG_TARGET_rockchip_armv8=y" > .config
+          # 配置为 RK3568 目标
+          echo "CONFIG_TARGET_rockchip=y" > .config
+          echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
           echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
-          echo "CONFIG_ALL_NONSHARED=n" >> .config
-          echo "CONFIG_ALL_KMODS=n" >> .config
-          echo "CONFIG_ALL=n" >> .config
-          echo "CONFIG_AUTOREMOVE=y" >> .config
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
           
@@ -96,24 +82,24 @@ jobs:
 
       - name: Download package sources
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           make package/libwebsockets-full/download V=s
           make package/ttyd/download V=s
           find dl -size -1024c -exec ls -l {} \; || true
 
-      - name: Compile libwebsockets-full (OpenSSL variant)
+      - name: Compile libwebsockets-full
         id: compile_libwebsockets
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           echo "🚀 Starting libwebsockets-full compilation..."
           make package/libwebsockets-full/clean V=s
-          make package/libwebsockets-full/compile BUILD_VARIANT=openssl -j$(nproc) V=s
+          make package/libwebsockets-full/compile -j$(nproc) V=s
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Compile ttyd
         id: compile_ttyd
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           echo "🚀 Starting ttyd compilation..."
           make package/ttyd/clean V=s
           make package/ttyd/compile -j$(nproc) V=s
@@ -123,7 +109,7 @@ jobs:
       - name: Collect build artifacts
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           mkdir -p upload
           
           # 查找所有相关的 IPK 文件
@@ -151,41 +137,40 @@ jobs:
           
           echo "📁 Upload directory contents:"
           ls -la upload/
-          echo "📊 File details:"
-          file upload/* 2>/dev/null || echo "No files in upload directory"
 
       - name: Generate release info
         id: release_info
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success'
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           cat > upload/RELEASE_INFO.md << 'EOF'
           ## 🌐 TTYD (HTTPS/TLS) Build for RK3568
           
           ### Build Information
           - **Build Date**: $(date)
-          - **Target**: OpenWrt 23.05.3 (Rockchip ARMv8)
+          - **Source**: coolsnowwolf/lede
+          - **Target**: Rockchip ARMv8 (RK3568)
           - **Repository**: ${{ github.repository }}
           - **Commit**: ${{ github.sha }}
           
           ### Packages Included
-          - **ttyd** - Share your terminal over the web with TLS/SSL support
+          - **ttyd** - Share your terminal over the web with TLS/SSL support[citation:2][citation:3]
           - **libwebsockets-full** - Full WebSocket library with OpenSSL support
           
           ### Installation Instructions
-          1. Upload the IPK files to your OpenWrt device
+          1. Upload the IPK files to your RK3568 OpenWrt device
           2. Install packages:
           ```bash
           opkg install libwebsockets-full_*.ipk
           opkg install ttyd_*.ipk
           ```
           
-          3. Generate SSL certificates and start HTTPS server:
+          3. Generate SSL certificates and start HTTPS server[citation:7]:
           ```bash
           # Create SSL directory
           mkdir -p /etc/ssl
           
-          # Generate self-signed certificate (valid for 365 days)
+          # Generate self-signed certificate
           openssl req -x509 -newkey rsa:2048 \
             -keyout /etc/ssl/ttyd.key \
             -out /etc/ssl/ttyd.crt \
@@ -197,6 +182,12 @@ jobs:
           ```
           
           4. Access via browser: `https://your-device-ip:7681`
+          
+          ### ttyd SSL Options[citation:5][citation:8]
+          - `--ssl`: Enable SSL
+          - `--ssl-cert`: SSL certificate file path  
+          - `--ssl-key`: SSL key file path
+          - `--ssl-ca`: SSL CA file path for client certificate verification
           
           ### File List
           EOF
@@ -213,10 +204,10 @@ jobs:
           BUILD_TAG="build-$(date +%Y%m%d-%H%M%S)"
           echo "Creating release with tag: $BUILD_TAG"
           gh release create "$BUILD_TAG" \
-            --title "TTYD HTTPS Build $(date +'%Y-%m-%d %H:%M')" \
-            --notes-file ${{ env.SDK_DIR }}/upload/RELEASE_INFO.md \
-            ${{ env.SDK_DIR }}/upload/*.ipk \
-            ${{ env.SDK_DIR }}/upload/ttyd \
+            --title "TTYD HTTPS Build for RK3568 $(date +'%Y-%m-%d %H:%M')" \
+            --notes-file $LEDE_DIR/upload/RELEASE_INFO.md \
+            $LEDE_DIR/upload/*.ipk \
+            $LEDE_DIR/upload/ttyd \
             --prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -226,17 +217,14 @@ jobs:
         with:
           name: ttyd-https-packages
           path: |
-            ${{ env.SDK_DIR }}/upload/*.ipk
-            ${{ env.SDK_DIR }}/upload/ttyd
+            $LEDE_DIR/upload/*.ipk
+            $LEDE_DIR/upload/ttyd
           if-no-files-found: warn
 
       - name: Debug build directory structure
         if: always()
         run: |
-          cd $SDK_DIR
+          cd $LEDE_DIR
           echo "🔍 Debugging build directory structure..."
           echo "=== All IPK files ==="
           find bin -name "*.ipk" -type f | head -20
-          echo "=== Build directories ==="
-          find build_dir -name "*ttyd*" -type d | head -10
-          find build_dir -name "*libwebsockets*" -type d | head -10
