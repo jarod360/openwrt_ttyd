@@ -1,10 +1,10 @@
-name: Build TTYD with HTTPS (TLS) for RK3568 using OpenWrt 21.02.1
+name: 为 RK3568 构建带 HTTPS (TLS) 的 TTYD，使用 OpenWrt 21.02.1
 
 on:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'SSH connection to Actions'
+        description: 'SSH 连接到 Actions'
         required: false
         default: 'false'
 
@@ -22,10 +22,10 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-      - name: Checkout repository
+      - name: 检出代码库
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: 安装编译依赖
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
           sudo apt update -y
@@ -38,7 +38,7 @@ jobs:
           python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
           swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: Download and extract OpenWrt 21.02.1 SDK
+      - name: 下载并解压 OpenWrt 21.02.1 SDK
         run: |
           wget -q ${{ env.SDK_URL }}
           file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
@@ -48,44 +48,44 @@ jobs:
           elif [[ $file_name == *.tar.zst ]]; then
             tar --zstd -x -f $file_name -C ./sdk --strip-components=1
           else
-            echo "Unsupported file format: $file_name"
+            echo "不支持的文件格式: $file_name"
             exit 1
           fi
           echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
 
-      - name: Copy custom packages to SDK
+      - name: 复制自定义软件包到 SDK
         run: |
           # 检查包目录是否存在
           if [ -d "libwebsockets-full" ]; then
             cp -r libwebsockets-full $SDK_DIR/package/
-            echo "✅ libwebsockets-full package copied"
+            echo "✅ libwebsockets-full 包已复制"
           else
-            echo "❌ libwebsockets-full directory not found"
+            echo "❌ libwebsockets-full 目录未找到"
             exit 1
           fi
           
           if [ -d "ttyd" ]; then
             cp -r ttyd $SDK_DIR/package/
-            echo "✅ ttyd package copied"
+            echo "✅ ttyd 包已复制"
           else
-            echo "❌ ttyd directory not found"
+            echo "❌ ttyd 目录未找到"
             exit 1
           fi
 
-          # 新增：复制 luci-app-ttyd 包
+          # 复制 luci-app-ttyd 包
           if [ -d "luci-app-ttyd" ]; then
             cp -r luci-app-ttyd $SDK_DIR/package/
-            echo "✅ luci-app-ttyd package copied"
+            echo "✅ luci-app-ttyd 包已复制"
           else
-            echo "❌ luci-app-ttyd directory not found"
+            echo "❌ luci-app-ttyd 目录未找到"
             exit 1
           fi
 
-      - name: SSH connection to Actions (debug)
+      - name: SSH 连接到 Actions (调试)
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event.inputs.ssh == 'true' }}
 
-      - name: Setup feeds and configuration for OpenWrt 21.02.1
+      - name: 为 OpenWrt 21.02.1 设置 feeds 和配置
         run: |
           cd $SDK_DIR
           ./scripts/feeds update -a
@@ -101,7 +101,7 @@ jobs:
           
           make defconfig
 
-      - name: Download package sources
+      - name: 下载软件包源码
         run: |
           cd $SDK_DIR
           make package/libwebsockets-full/download V=s
@@ -109,158 +109,161 @@ jobs:
           make package/luci-app-ttyd/download V=s
           find dl -size -1024c -exec ls -l {} \; || true
 
-      - name: Compile libwebsockets-full
+      - name: 编译 libwebsockets-full
         id: compile_libwebsockets
         run: |
           cd $SDK_DIR
-          echo "🚀 Starting libwebsockets-full compilation..."
+          echo "🚀 开始编译 libwebsockets-full..."
           make package/libwebsockets-full/clean V=s
           if make package/libwebsockets-full/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "✅ libwebsockets-full compiled successfully"
+            echo "✅ libwebsockets-full 编译成功"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "❌ libwebsockets-full compilation failed"
+            echo "❌ libwebsockets-full 编译失败"
             exit 1
           fi
 
-      - name: Compile ttyd
+      - name: 编译 ttyd
         id: compile_ttyd
         run: |
           cd $SDK_DIR
-          echo "🚀 Starting ttyd compilation..."
+          echo "🚀 开始编译 ttyd..."
           make package/ttyd/clean V=s
           if make package/ttyd/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "✅ ttyd compiled successfully"
+            echo "✅ ttyd 编译成功"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "❌ ttyd compilation failed"
+            echo "❌ ttyd 编译失败"
             exit 1
           fi
 
-      - name: Compile luci-app-ttyd
+      - name: 编译 luci-app-ttyd
         id: compile_luci_app_ttyd
         run: |
           cd $SDK_DIR
-          echo "🚀 Starting luci-app-ttyd compilation..."
+          echo "🚀 开始编译 luci-app-ttyd..."
           make package/luci-app-ttyd/clean V=s
           if make package/luci-app-ttyd/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "✅ luci-app-ttyd compiled successfully"
+            echo "✅ luci-app-ttyd 编译成功"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "❌ luci-app-ttyd compilation failed"
+            echo "❌ luci-app-ttyd 编译失败"
             exit 1
           fi
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-      - name: Collect build artifacts
+      - name: 收集构建产物
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           mkdir -p upload
           
           # 查找所有相关的 IPK 文件
-          echo "=== Searching for IPK files ==="
+          echo "=== 搜索 IPK 文件 ==="
           find bin -name "*ttyd*.ipk" -type f | while read file; do
-            echo "Found ttyd IPK: $file"
+            echo "找到 ttyd IPK: $file"
             cp "$file" upload/
           done
           
           find bin -name "*libwebsockets*.ipk" -type f | while read file; do
-            echo "Found libwebsockets IPK: $file"
+            echo "找到 libwebsockets IPK: $file"
             cp "$file" upload/
           done
 
-          # 新增：查找 luci-app-ttyd IPK 文件
+          # 查找 luci-app-ttyd IPK 文件
           find bin -name "*luci-app-ttyd*.ipk" -type f | while read file; do
-            echo "Found luci-app-ttyd IPK: $file"
+            echo "找到 luci-app-ttyd IPK: $file"
             cp "$file" upload/
           done
           
           # 查找二进制文件
-          echo "=== Searching for binary files ==="
+          echo "=== 搜索二进制文件 ==="
           find build_dir -name "ttyd" -type f | while read file; do
             if file "$file" | grep -q "ELF"; then
-              echo "Found ELF binary: $file"
+              echo "找到 ELF 二进制文件: $file"
               cp "$file" upload/ttyd
               chmod +x upload/ttyd
               break
             fi
           done
           
-          echo "📁 Upload directory contents:"
+          echo "📁 上传目录内容:"
           ls -la upload/
 
-      - name: Generate release info
+      - name: 生成发布信息
         id: release_info
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
-          cat > upload/RELEASE_INFO.md << 'EOF'
-          ## 🌐 TTYD (HTTPS/TLS) Build for RK3568 - OpenWrt 21.02.1
+          # 获取当前日期时间
+          BUILD_DATE=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
           
-          ### Build Information
-          - **Build Date**: $(date)
-          - **OpenWrt Version**: 21.02.1
-          - **Target**: Rockchip ARMv8 (RK3568)
-          - **Repository**: ${{ github.repository }}
-          - **Commit**: ${{ github.sha }}
+          cat > upload/RELEASE_INFO.md << EOF
+          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 21.02.1
           
-          ### Packages Included
-          - **ttyd** - Share your terminal over the web with TLS/SSL support
-          - **libwebsockets-full** - Full WebSocket library with OpenSSL support
-          - **luci-app-ttyd** - LuCI web interface for ttyd
+          ### 构建信息
+          - **构建日期**: $BUILD_DATE
+          - **OpenWrt 版本**: 21.02.1
+          - **目标平台**: Rockchip ARMv8 (RK3568)
+          - **代码库**: ${{ github.repository }}
+          - **提交**: ${{ github.sha }}
           
-          ### Installation Instructions
-          1. Upload the IPK files to your RK3568 OpenWrt 21.02.1 device
-          2. Install packages (按顺序安装):
-          ```bash
+          ### 包含的软件包
+          - **ttyd** - 通过网络共享您的终端，支持 TLS/SSL
+          - **libwebsockets-full** - 完整的 WebSocket 库，支持 OpenSSL
+          - **luci-app-ttyd** - ttyd 的 LuCI 网页界面
+          
+          ### 安装说明
+          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 21.02.1 设备
+          2. 安装软件包 (按顺序安装):
+          \`\`\`bash
           opkg install libwebsockets-full_*.ipk
           opkg install ttyd_*.ipk
           opkg install luci-app-ttyd_*.ipk
-          ```
+          \`\`\`
           
           3. 启用服务:
-          ```bash
+          \`\`\`bash
           /etc/init.d/ttyd enable
           /etc/init.d/ttyd start
-          ```
+          \`\`\`
           
           4. 通过 LuCI 界面配置 SSL:
           - 访问 LuCI 管理界面
-          - 进入 "Services" -> "Terminal"
+          - 进入 "服务" -> "终端"
           - 启用 SSL/TLS 并配置证书路径
           
           5. 或者手动生成 SSL 证书:
-          ```bash
-          # Create SSL directory
+          \`\`\`bash
+          # 创建 SSL 目录
           mkdir -p /etc/ssl
           
-          # Generate self-signed certificate
-          openssl req -x509 -newkey rsa:2048 \
-            -keyout /etc/ssl/ttyd.key \
-            -out /etc/ssl/ttyd.crt \
-            -days 365 -nodes \
+          # 生成自签名证书
+          openssl req -x509 -newkey rsa:2048 \\
+            -keyout /etc/ssl/ttyd.key \\
+            -out /etc/ssl/ttyd.crt \\
+            -days 365 -nodes \\
             -subj '/CN=localhost'
             
-          # Start ttyd with SSL
+          # 使用 SSL 启动 ttyd
           ttyd --ssl --ssl-cert /etc/ssl/ttyd.crt --ssl-key /etc/ssl/ttyd.key bash
-          ```
+          \`\`\`
           
-          6. 通过浏览器访问: `https://your-device-ip:7681`
+          6. 通过浏览器访问: \`https://您的设备IP:7681\`
           
-          ### File List
+          ### 文件列表
           EOF
           
-          echo "\`\`\`" >> upload/RELEASE_INFO.md
+          echo '```' >> upload/RELEASE_INFO.md
           ls -la upload/ >> upload/RELEASE_INFO.md
-          echo "\`\`\`" >> upload/RELEASE_INFO.md
+          echo '```' >> upload/RELEASE_INFO.md
           
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Generate unique tag with date and random number
+      - name: 生成包含日期和随机数的唯一标签
         id: tag_generator
         if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
         run: |
@@ -268,23 +271,22 @@ jobs:
           RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
           # 构建标签：OpenWrt-ttyd-年月日-随机四位数
           BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"
-          echo "Generated tag: $BUILD_TAG"
+          echo "生成的标签: $BUILD_TAG"
           echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: 创建 GitHub 发布
         if: steps.tag_generator.outputs.tag_name
         run: |
-          echo "Creating release with tag: ${{ steps.tag_generator.outputs.tag_name }}"
+          echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 21.02.1 TTYD HTTPS Build for RK3568 $(date +'%Y-%m-%d')" \
+            --title "OpenWrt 21.02.1 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
-            $SDK_DIR/upload/ttyd \
-            --prerelease
+            $SDK_DIR/upload/ttyd
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts to GitHub
+      - name: 上传产物到 GitHub
         uses: actions/upload-artifact@v4
         with:
           name: ttyd-https-packages-21.02.1
@@ -293,14 +295,14 @@ jobs:
             $SDK_DIR/upload/ttyd
           if-no-files-found: warn
 
-      - name: Debug build directory structure
+      - name: 调试构建目录结构
         if: always()
         run: |
           cd $SDK_DIR
-          echo "🔍 Debugging build directory structure..."
-          echo "=== All IPK files ==="
+          echo "🔍 调试构建目录结构..."
+          echo "=== 所有 IPK 文件 ==="
           find bin -name "*.ipk" -type f | head -20
-          echo "=== Build directories ==="
+          echo "=== 构建目录 ==="
           find build_dir -name "*ttyd*" -type d | head -10
           find build_dir -name "*libwebsockets*" -type d | head -10
           find build_dir -name "*luci-app-ttyd*" -type d | head -10
