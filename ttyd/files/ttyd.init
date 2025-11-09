@@ -137,6 +137,9 @@ start_service() {
 
     local cmd_args=""
 
+    # 关键修复：添加 --writable 参数以启用输入功能
+    cmd_args="$cmd_args --writable"
+
     # 端口
     [ -n "$ttyd_port" ] && [ "$ttyd_port" != "0" ] && cmd_args="$cmd_args -p $ttyd_port"
 
@@ -209,7 +212,6 @@ start_service() {
     procd_set_param stderr 1
     procd_set_param stdout 1
     procd_set_param pidfile "$TTYD_PID"
-    procd_set_param terminal 1
     procd_set_param respawn
     procd_set_param respawn_retry 3600
     procd_close_instance
