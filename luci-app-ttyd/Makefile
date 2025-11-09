@@ -11,7 +11,7 @@ LUCI_DEPENDS:=+ttyd
 LUCI_PKGARCH:=all
 
 PKG_VERSION:=2.2
-PKG_RELEASE:=2  # 增加发布版本号以区分修改
+PKG_RELEASE:=2  
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
