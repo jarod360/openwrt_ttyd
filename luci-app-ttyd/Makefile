@@ -9,8 +9,12 @@ include $(TOPDIR)/rules.mk
 LUCI_TITLE:=LuCI support for ttyd
 LUCI_DEPENDS:=+ttyd
 LUCI_PKGARCH:=all
+
+# 关键修改：指定要内嵌的语言
+LUCI_LANGUAGES:=zh-cn
+
 PKG_VERSION:=2.2
-PKG_RELEASE:=1
+PKG_RELEASE:=2  # 增加发布版本号以区分修改
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
