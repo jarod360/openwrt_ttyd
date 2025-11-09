@@ -137,8 +137,8 @@ start_service() {
 
     local cmd_args=""
 
-    # 关键修复：添加 --writable 参数以启用输入功能
-    cmd_args="$cmd_args --writable"
+    # 关键修复：添加 -W 参数以启用输入功能
+    cmd_args="$cmd_args -W"
 
     # 端口
     [ -n "$ttyd_port" ] && [ "$ttyd_port" != "0" ] && cmd_args="$cmd_args -p $ttyd_port"
