@@ -84,9 +84,10 @@ jobs:
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event.inputs.ssh == 'true' }}
 
-      - name: 为 OpenWrt 23.05.7 设置 feeds 和配置
+      - name: 为 OpenWrt 23.05.3 设置 feeds 和配置
         run: |
           cd $SDK_DIR
+          rm -rf package/feeds/packages/libwebsockets
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
