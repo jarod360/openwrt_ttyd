@@ -1,4 +1,4 @@
-name: 为 RK3568 构建带 HTTPS (TLS) 的 TTYD，使用 OpenWrt 23.05.7
+name: 为 RK3568 构建带 HTTPS (TLS) 的 TTYD，使用 OpenWrt 23.05.3
 
 on:
   workflow_dispatch:
@@ -14,9 +14,8 @@ permissions:
 
 env:
   TZ: Asia/Shanghai
-  # 使用 OpenWrt 23.05.7 SDK for Rockchip ARMv8
-  SDK_URL: https://downloads.openwrt.org/releases/23.05.7/targets/rockchip/armv8/openwrt-sdk-23.05.7-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-
+  # 使用 OpenWrt 23.05.3 SDK for Rockchip ARMv8
+  SDK_URL: https://downloads.openwrt.org/releases/23.05.3/targets/rockchip/armv8/openwrt-sdk-23.05.3-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
 jobs:
   build:
     runs-on: ubuntu-22.04
