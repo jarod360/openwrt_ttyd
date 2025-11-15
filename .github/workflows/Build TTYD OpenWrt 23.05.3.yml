@@ -15,7 +15,7 @@ permissions:
 env:
   TZ: Asia/Shanghai
   # 使用 OpenWrt 24.10.4 SDK for Rockchip ARMv8
-  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
 
 jobs:
   build:
