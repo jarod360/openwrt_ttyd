@@ -6,12 +6,14 @@
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI support for ttyd
+PKG_NAME:=luci-app-ttyd
+PKG_VERSION:=2.0
+PKG_RELEASE:=1
+
+LUCI_TITLE:=LuCI Support for ttyd
 LUCI_DEPENDS:=+ttyd
 LUCI_PKGARCH:=all
-
-PKG_VERSION:=2.2
-PKG_RELEASE:=2  
+LUCI_NO_COMMIT:=1
 
 include $(TOPDIR)/feeds/luci/luci.mk
 
