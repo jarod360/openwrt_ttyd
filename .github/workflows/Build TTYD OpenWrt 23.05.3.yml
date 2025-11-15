@@ -20,14 +20,14 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: 检出代码库
         uses: actions/checkout@v4
 
       - name: 安装编译依赖
         run: |
-          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android || true
           sudo apt update -y
           sudo apt full-upgrade -y
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
@@ -42,11 +42,17 @@ jobs:
         run: |
           wget -q ${{ env.SDK_URL }}
           file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
-          mkdir sdk
+          mkdir -p sdk
           if [[ $file_name == *.tar.xz ]]; then
             tar -xJf $file_name -C ./sdk --strip-components=1
           elif [[ $file_name == *.tar.zst ]]; then
-            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
+            # 使用 tar --zstd 如果可用，否则使用 zstd -d
+            if tar --version 2>/dev/null | grep -q zstd; then
+              tar --zstd -x -f $file_name -C ./sdk --strip-components=1
+            else
+              # 备用解压：先解压 zst 到临时 .tar，然后提取
+              zstd -d -c "$file_name" > /tmp/sdk.tar && tar -xf /tmp/sdk.tar -C ./sdk --strip-components=1
+            fi
           else
             echo "不支持的文件格式: $file_name"
             exit 1
@@ -63,7 +69,7 @@ jobs:
             echo "❌ libwebsockets-full 目录未找到"
             exit 1
           fi
-          
+
           if [ -d "ttyd" ]; then
             cp -r ttyd $SDK_DIR/package/
             echo "✅ ttyd 包已复制"
@@ -89,23 +95,23 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "=== 开始彻底清理官方 libwebsockets 包 ==="
-          
+
           # 首先更新 feeds 获取包列表
           ./scripts/feeds update -a
-          
-          # 使用 feeds 命令卸载官方包
+
+          # 使用 feeds 命令卸载官方包（容错）
           ./scripts/feeds uninstall libwebsockets || true
-          
+
           # 彻底删除所有官方 libwebsockets 相关文件
           echo "移除 feeds/packages/libs/libwebsockets..."
-          rm -rf feeds/packages/libs/libwebsockets
-          
+          rm -rf feeds/packages/libs/libwebsockets || true
+
           echo "移除 package/feeds/packages/libwebsockets..."
-          rm -rf package/feeds/packages/libwebsockets
-          
+          rm -rf package/feeds/packages/libwebsockets || true
+
           echo "搜索并移除其他位置的 libwebsockets 包..."
           find . -type d -name "libwebsockets" ! -path "*/libwebsockets-full/*" ! -path "*/dl/*" -exec echo "移除: {}" \; -exec rm -rf {} + || true
-          
+
           # 清理构建缓存
           echo "清理构建缓存..."
           rm -rf build_dir/target-*/libwebsockets-* || true
@@ -117,79 +123,93 @@ jobs:
           cd $SDK_DIR
           echo "=== 安装 feeds（不包含官方 libwebsockets）==="
           ./scripts/feeds install -a
-          
+
           echo "=== 验证官方 libwebsockets 包是否已彻底删除 ==="
           if [ -d "feeds/packages/libs/libwebsockets" ]; then
             echo "❌ 错误：feeds/packages/libs/libwebsockets 仍然存在"
             exit 1
           fi
-          
+
           if [ -d "package/feeds/packages/libwebsockets" ]; then
             echo "❌ 错误：package/feeds/packages/libwebsockets 仍然存在"
             exit 1
           fi
-          
+
           echo "✅ 官方 libwebsockets 包已彻底删除"
           echo "✅ 自定义 libwebsockets-full 包状态："
-          find package -name "*libwebsockets*" -type d
+          find package -name "*libwebsockets*" -type d || true
 
       - name: 配置 OpenWrt 构建
         run: |
           cd $SDK_DIR
           echo "=== 配置构建目标 ==="
           # 配置为 RK3568 目标
-          echo "CONFIG_TARGET_rockchip=y" > .config
-          echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
-          echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
-          
-          # 选择 libuv 和自定义的 libwebsockets-full
-          echo "CONFIG_PACKAGE_libuv=y" >> .config
-          echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
-          echo "CONFIG_PACKAGE_ttyd=m" >> .config
-          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
-          
-          # 明确禁用其他 libwebsockets 变体
-          echo "# CONFIG_PACKAGE_libwebsockets is not set" >> .config
-          echo "# CONFIG_PACKAGE_libwebsockets-openssl is not set" >> .config
-          echo "# CONFIG_PACKAGE_libwebsockets-mbedtls is not set" >> .config
-          
+          cat > .config <<'EOF'
+CONFIG_TARGET_rockchip=y
+CONFIG_TARGET_rockchip_armv8=y
+CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
+# 选择 libuv 和自定义的 libwebsockets-full
+CONFIG_PACKAGE_libuv=y
+CONFIG_PACKAGE_libwebsockets-full=m
+CONFIG_PACKAGE_ttyd=m
+CONFIG_PACKAGE_luci-app-ttyd=m
+# 明确禁用其他 libwebsockets 变体
+# CONFIG_PACKAGE_libwebsockets is not set
+# CONFIG_PACKAGE_libwebsockets-openssl is not set
+# CONFIG_PACKAGE_libwebsockets-mbedtls is not set
+EOF
+
           echo "=== 应用默认配置 ==="
           make defconfig
-          
+
           echo "=== 最终配置检查 ==="
           echo "libuv 和 libwebsockets 相关配置:"
-          grep -E "CONFIG_PACKAGE_(libuv|libwebsockets)" .config || echo "未找到相关配置"
+          grep -E "CONFIG_PACKAGE_(libuv|libwebsockets|ttyd|luci-app-ttyd)" .config || echo "未找到相关配置"
 
       - name: 下载软件包源码
         run: |
           cd $SDK_DIR
           # 首先下载基础包和自定义包
           echo "下载 libuv 源码..."
-          make package/feeds/packages/libuv/download V=s
-          
+          make package/feeds/packages/libuv/download V=s || true
+
           if [ -d "package/libwebsockets-full" ]; then
             echo "下载 libwebsockets-full 源码..."
-            make package/libwebsockets-full/download V=s
+            make package/libwebsockets-full/download V=s || true
           fi
-          
-          make package/ttyd/download V=s
-          make package/luci-app-ttyd/download V=s
-          
+
+          make package/ttyd/download V=s || true
+          make package/luci-app-ttyd/download V=s || true
+
           echo "检查下载的文件:"
           find dl -size -1024c -exec ls -l {} \; || true
+
+      - name: 对 luci 构建脚本做安全性补丁（避免未加引号的 test 导致错误）   # <<< CHANGED
+        run: |
+          cd $SDK_DIR
+          # 如果存在 feeds/luci/luci.mk，给常见的 test/if 条件添加引号，防止包含空格时出错
+          LUCI_MK="feeds/luci/luci.mk"
+          if [ -f "$LUCI_MK" ]; then
+            # 备份原文件
+            cp -a "$LUCI_MK" "$LUCI_MK.bak"
+            # 用比较保守的替换：将常见形态的 [ -f $VAR ] -> [ -f "$VAR" ] 等
+            /usr/bin/perl -0777 -pe 's/\[([[:space:]]*)(-f|-d|-e|-n|-z)([[:space:]]+)([^\]\n]+)\]/\[\1\2\3"\4"\]/g' -i "$LUCI_MK" || true
+            echo "已对 $LUCI_MK 进行安全性补丁（备份: $LUCI_MK.bak）"
+          else
+            echo "$LUCI_MK 不存在，跳过补丁"
+          fi
 
       - name: 编译 libuv
         id: compile_libuv
         run: |
           cd $SDK_DIR
           echo "🚀 开始编译 libuv..."
-          
-          make package/feeds/packages/libuv/clean V=s
-          
+          make package/feeds/packages/libuv/clean V=s || true
+
           if make package/feeds/packages/libuv/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ libuv 编译成功"
-            
+
             # 验证编译产物
             echo "=== 检查 libuv 编译产物 ==="
             find bin -name "*libuv*" -type f | head -10 || echo "未找到 libuv 产物"
@@ -204,15 +224,11 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "🚀 开始编译 libwebsockets-full..."
-          
-          # 首先清理可能的旧构建
-          make package/libwebsockets-full/clean V=s
-          
+          make package/libwebsockets-full/clean V=s || true
+
           if make package/libwebsockets-full/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ libwebsockets-full 编译成功"
-            
-            # 验证编译产物
             echo "=== 检查编译产物 ==="
             find bin -name "*libwebsockets*" -type f | head -10 || echo "未找到 libwebsockets 产物"
           else
@@ -226,8 +242,8 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "🚀 开始编译 ttyd..."
-          make package/ttyd/clean V=s
-          
+          make package/ttyd/clean V=s || true
+
           if make package/ttyd/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ ttyd 编译成功"
@@ -237,18 +253,28 @@ jobs:
             exit 1
           fi
 
-      - name: 编译 luci-app-ttyd
+      - name: 编译 luci-app-ttyd（设置 PKG_ARCH 并增加容错）    # <<< CHANGED
         id: compile_luci_app_ttyd
         run: |
           cd $SDK_DIR
           echo "🚀 开始编译 luci-app-ttyd..."
-          make package/luci-app-ttyd/clean V=s
+          make package/luci-app-ttyd/clean V=s || true
+
+          # 强制包架构为 all，防止打包时产生空架构导致文件名/判断异常
+          export PKG_ARCH=all
+          echo "已设置 PKG_ARCH=$PKG_ARCH"
+
           if make package/luci-app-ttyd/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ luci-app-ttyd 编译成功"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
             echo "❌ luci-app-ttyd 编译失败"
+            # 输出可能的打包产物以便调试
+            echo "bin 目录内容预览："
+            ls -la bin || true
+            echo "build_dir 中 luci-app-ttyd 的内容："
+            find build_dir -maxdepth 3 -type f -path "*luci-app-ttyd*" -print || true
             exit 1
           fi
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
@@ -258,32 +284,11 @@ jobs:
         run: |
           cd $SDK_DIR
           mkdir -p upload
-          
+
           # 查找所有相关的 IPK 文件
           echo "=== 搜索 IPK 文件 ==="
-          
-          # 查找 libuv IPK 文件
-          find bin -name "*libuv*.ipk" -type f | while read file; do
-            echo "找到 libuv IPK: $file"
-            cp "$file" upload/
-          done
-          
-          find bin -name "*ttyd*.ipk" -type f | while read file; do
-            echo "找到 ttyd IPK: $file"
-            cp "$file" upload/
-          done
-          
-          find bin -name "*libwebsockets*.ipk" -type f | while read file; do
-            echo "找到 libwebsockets IPK: $file"
-            cp "$file" upload/
-          done
+          find bin -type f -name "*.ipk" -print -exec cp -t upload/ {} + || true
 
-          # 查找 luci-app-ttyd IPK 文件
-          find bin -name "*luci-app-ttyd*.ipk" -type f | while read file; do
-            echo "找到 luci-app-ttyd IPK: $file"
-            cp "$file" upload/
-          done
-          
           # 查找二进制文件
           echo "=== 搜索二进制文件 ==="
           find build_dir -name "ttyd" -type f | while read file; do
@@ -294,93 +299,42 @@ jobs:
               break
             fi
           done
-          
+
           echo "📁 上传目录内容:"
-          ls -la upload/
+          ls -la upload/ || true
 
       - name: 生成发布信息
         id: release_info
         if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
-          # 获取当前日期时间
           BUILD_DATE=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
-          
-          # 获取 libuv 版本信息
-          LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f | head -1 | grep -o 'libuv[^_]*' | sed 's/libuv[^0-9]*//' || echo "未知版本")
-          
+
+          LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f -print -quit | xargs -r basename | sed 's/[^0-9]*\([0-9.]*\).*/\1/' || echo "未知版本")
+
           cat > upload/RELEASE_INFO.md << EOF
-          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 24.10.4
-          
-          ### 构建信息
-          - **构建日期**: $BUILD_DATE
-          - **OpenWrt 版本**: 24.10.4
-          - **目标平台**: Rockchip ARMv8 (RK3568)
-          - **代码库**: ${{ github.repository }}
-          - **提交**: ${{ github.sha }}
-          - **libuv 版本**: $LIBUV_VERSION
-          - **libwebsockets**: 自定义完整版（完全替换官方版本）
-          
-          ### 包含的软件包
-          - **libuv** - 异步 I/O 库，提供事件循环支持
-          - **ttyd** - 通过网络共享您的终端，支持 TLS/SSL
-          - **libwebsockets-full** - 完整的 WebSocket 库，支持 OpenSSL（替换官方版本）
-          - **luci-app-ttyd** - ttyd 的 LuCI 网页界面
-          
-          ### 安装说明
-          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 24.10.4 设备
-          2. 安装软件包 (按顺序安装):
-          \`\`\`bash
-          # 首先安装 libuv 依赖
-          opkg install libuv_*.ipk
-          
-          # 然后安装自定义的 libwebsockets-full
-          opkg install libwebsockets-full_*.ipk
-          
-          # 最后安装 ttyd 和界面
-          opkg install ttyd_*.ipk
-          opkg install luci-app-ttyd_*.ipk
-          \`\`\`
-          
-          3. 启用服务:
-          \`\`\`bash
-          /etc/init.d/ttyd enable
-          /etc/init.d/ttyd start
-          \`\`\`
-          
-          4. 配置 TTYD 使用 SSL (如果 LuCI 界面未自动配置):
-          \`\`\`bash
-          # 编辑 ttyd 配置
-          uci set ttyd.@ttyd[0].ssl='1'
-          uci set ttyd.@ttyd[0].ssl_cert='/etc/uhttpd.crt'
-          uci set ttyd.@ttyd[0].ssl_key='/etc/uhttpd.key'
-          uci commit ttyd
-          /etc/init.d/ttyd restart
-          \`\`\`
-          
-          5. 或者使用系统已有的证书 (如果存在):
-          \`\`\`bash
-          # 检查系统证书
-          ls -la /etc/ssl/certs/
-          
-          # 使用现有证书启动 ttyd
-          ttyd --ssl --ssl-cert /path/to/cert.crt --ssl-key /path/to/cert.key -p 7681 bash
-          \`\`\`
-          
-          6. 通过浏览器访问: \`https://您的设备IP:7681\`
-          
-          ### 重要说明
-          - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
-          - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
-          - 所有软件包均针对 OpenWrt 24.10.4 和 RK3568 架构优化编译
-          
-          ### 文件列表
-          EOF
-          
+## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 24.10.4
+
+### 构建信息
+- **构建日期**: $BUILD_DATE
+- **OpenWrt 版本**: 24.10.4
+- **目标平台**: Rockchip ARMv8 (RK3568)
+- **代码库**: ${{ github.repository }}
+- **提交**: ${{ github.sha }}
+- **libuv 版本**: $LIBUV_VERSION
+- **libwebsockets**: 自定义完整版（完全替换官方版本）
+
+### 包含的软件包
+- **libuv**
+- **ttyd**
+- **libwebsockets-full**
+- **luci-app-ttyd**
+EOF
+
           echo '```' >> upload/RELEASE_INFO.md
           ls -la upload/ >> upload/RELEASE_INFO.md
           echo '```' >> upload/RELEASE_INFO.md
-          
+
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: 生成包含日期和随机数的唯一标签
@@ -390,7 +344,7 @@ jobs:
           # 生成随机四位数
           RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
           # 构建标签：OpenWrt-ttyd-年月日-随机四位数
-          BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDUM_NUM}"
+          BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"   # <<< CHANGED 修正变量名
           echo "生成的标签: $BUILD_TAG"
           echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
 
