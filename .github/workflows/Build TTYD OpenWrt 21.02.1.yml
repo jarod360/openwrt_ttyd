@@ -16,6 +16,7 @@ env:
   TZ: Asia/Shanghai
   # 使用 OpenWrt 23.05.3 SDK for Rockchip ARMv8
   SDK_URL: https://downloads.openwrt.org/releases/23.05.3/targets/rockchip/armv8/openwrt-sdk-23.05.3-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -37,7 +38,7 @@ jobs:
           python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
           swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: 下载并解压 OpenWrt 23.05.7 SDK
+      - name: 下载并解压 OpenWrt 23.05.3 SDK
         run: |
           wget -q ${{ env.SDK_URL }}
           file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
@@ -87,11 +88,15 @@ jobs:
       - name: 为 OpenWrt 23.05.3 设置 feeds 和配置
         run: |
           cd $SDK_DIR
+          
+          # 彻底删除官方 libwebsockets 包
           rm -rf package/feeds/packages/libwebsockets
+          find package -type d -name "libwebsockets" ! -path "*/libwebsockets-full/*" -exec rm -rf {} + || true
+          
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           
-          # 配置为 RK3568 目标 - OpenWrt 23.05.7
+          # 配置为 RK3568 目标
           echo "CONFIG_TARGET_rockchip=y" > .config
           echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
           echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
@@ -202,11 +207,11 @@ jobs:
           BUILD_DATE=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
           
           cat > upload/RELEASE_INFO.md << EOF
-          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 23.05.7
+          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 23.05.3
           
           ### 构建信息
           - **构建日期**: $BUILD_DATE
-          - **OpenWrt 版本**: 23.05.7
+          - **OpenWrt 版本**: 23.05.3
           - **目标平台**: Rockchip ARMv8 (RK3568)
           - **代码库**: ${{ github.repository }}
           - **提交**: ${{ github.sha }}
@@ -217,7 +222,7 @@ jobs:
           - **luci-app-ttyd** - ttyd 的 LuCI 网页界面
           
           ### 安装说明
-          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 23.05.7 设备
+          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 23.05.3 设备
           2. 安装软件包 (按顺序安装):
           \`\`\`bash
           opkg install libwebsockets-full_*.ipk
@@ -279,7 +284,7 @@ jobs:
         run: |
           echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 23.05.7 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
+            --title "OpenWrt 23.05.3 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
             $SDK_DIR/upload/ttyd
@@ -289,20 +294,8 @@ jobs:
       - name: 上传产物到 GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: ttyd-https-packages-23.05.7
+          name: ttyd-https-packages-23.05.3
           path: |
             $SDK_DIR/upload/*.ipk
             $SDK_DIR/upload/ttyd
           if-no-files-found: warn
-
-      - name: 调试构建目录结构
-        if: always()
-        run: |
-          cd $SDK_DIR
-          echo "🔍 调试构建目录结构..."
-          echo "=== 所有 IPK 文件 ==="
-          find bin -name "*.ipk" -type f | head -20
-          echo "=== 构建目录 ==="
-          find build_dir -name "*ttyd*" -type d | head -10
-          find build_dir -name "*libwebsockets*" -type d | head -10
-          find build_dir -name "*luci-app-ttyd*" -type d | head -10
