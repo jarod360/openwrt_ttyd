@@ -19,7 +19,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: 检出代码库
         uses: actions/checkout@v4
@@ -212,4 +212,21 @@ EOF
 
       - name: 创建 GitHub 发布
         run: |
-          gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
+          TAG="${{ steps.tag_generator.outputs.tag_name }}"
+          echo "使用标签创建发布: $TAG"
+          gh release create "$TAG" \
+            --title "OpenWrt 24.10.4 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
+            --notes-file "$SDK_DIR/upload/RELEASE_INFO.md" \
+            $SDK_DIR/upload/*.ipk \
+            $SDK_DIR/upload/ttyd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传产物到 GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttyd-https-packages-24.10.4
+          path: |
+            $SDK_DIR/upload/*.ipk
+            $SDK_DIR/upload/ttyd
+          if-no-files-found: warn
