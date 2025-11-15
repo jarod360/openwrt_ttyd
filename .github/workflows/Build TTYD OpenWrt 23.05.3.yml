@@ -1,4 +1,4 @@
-name: 为 RK3568 构建带 HTTPS (TLS) 的 TTYD，使用 OpenWrt 23.05.3
+name: 为 RK3568 构建带 HTTPS (TLS) 的 TTYD，使用 OpenWrt 24.10.4
 
 on:
   workflow_dispatch:
@@ -14,8 +14,8 @@ permissions:
 
 env:
   TZ: Asia/Shanghai
-  # 使用 OpenWrt 23.05.3 SDK for Rockchip ARMv8
-  SDK_URL: https://downloads.openwrt.org/releases/23.05.3/targets/rockchip/armv8/openwrt-sdk-23.05.3-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+  # 使用 OpenWrt 24.10.4 SDK for Rockchip ARMv8
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
 
 jobs:
   build:
@@ -38,7 +38,7 @@ jobs:
           python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
           swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: 下载并解压 OpenWrt 23.05.3 SDK
+      - name: 下载并解压 OpenWrt 24.10.4 SDK
         run: |
           wget -q ${{ env.SDK_URL }}
           file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
@@ -142,7 +142,8 @@ jobs:
           echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
           echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
           
-          # 只选择自定义的 libwebsockets-full
+          # 选择 libuv 和自定义的 libwebsockets-full
+          echo "CONFIG_PACKAGE_libuv=y" >> .config
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
           echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
@@ -156,13 +157,16 @@ jobs:
           make defconfig
           
           echo "=== 最终配置检查 ==="
-          echo "libwebsockets 相关配置:"
-          grep -E "CONFIG_PACKAGE_libwebsockets" .config || echo "未找到相关配置"
+          echo "libuv 和 libwebsockets 相关配置:"
+          grep -E "CONFIG_PACKAGE_(libuv|libwebsockets)" .config || echo "未找到相关配置"
 
       - name: 下载软件包源码
         run: |
           cd $SDK_DIR
-          # 首先下载自定义包
+          # 首先下载基础包和自定义包
+          echo "下载 libuv 源码..."
+          make package/feeds/packages/libuv/download V=s
+          
           if [ -d "package/libwebsockets-full" ]; then
             echo "下载 libwebsockets-full 源码..."
             make package/libwebsockets-full/download V=s
@@ -173,6 +177,27 @@ jobs:
           
           echo "检查下载的文件:"
           find dl -size -1024c -exec ls -l {} \; || true
+
+      - name: 编译 libuv
+        id: compile_libuv
+        run: |
+          cd $SDK_DIR
+          echo "🚀 开始编译 libuv..."
+          
+          make package/feeds/packages/libuv/clean V=s
+          
+          if make package/feeds/packages/libuv/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ libuv 编译成功"
+            
+            # 验证编译产物
+            echo "=== 检查 libuv 编译产物 ==="
+            find bin -name "*libuv*" -type f | head -10 || echo "未找到 libuv 产物"
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "❌ libuv 编译失败"
+            exit 1
+          fi
 
       - name: 编译 libwebsockets-full
         id: compile_libwebsockets
@@ -229,13 +254,20 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: 收集构建产物
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
+        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           mkdir -p upload
           
           # 查找所有相关的 IPK 文件
           echo "=== 搜索 IPK 文件 ==="
+          
+          # 查找 libuv IPK 文件
+          find bin -name "*libuv*.ipk" -type f | while read file; do
+            echo "找到 libuv IPK: $file"
+            cp "$file" upload/
+          done
+          
           find bin -name "*ttyd*.ipk" -type f | while read file; do
             echo "找到 ttyd IPK: $file"
             cp "$file" upload/
@@ -268,36 +300,44 @@ jobs:
 
       - name: 生成发布信息
         id: release_info
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
+        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           # 获取当前日期时间
           BUILD_DATE=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
           
+          # 获取 libuv 版本信息
+          LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f | head -1 | grep -o 'libuv[^_]*' | sed 's/libuv[^0-9]*//' || echo "未知版本")
+          
           cat > upload/RELEASE_INFO.md << EOF
-          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 23.05.3
+          ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 24.10.4
           
           ### 构建信息
           - **构建日期**: $BUILD_DATE
-          - **OpenWrt 版本**: 23.05.3
+          - **OpenWrt 版本**: 24.10.4
           - **目标平台**: Rockchip ARMv8 (RK3568)
           - **代码库**: ${{ github.repository }}
           - **提交**: ${{ github.sha }}
+          - **libuv 版本**: $LIBUV_VERSION
           - **libwebsockets**: 自定义完整版（完全替换官方版本）
           
           ### 包含的软件包
+          - **libuv** - 异步 I/O 库，提供事件循环支持
           - **ttyd** - 通过网络共享您的终端，支持 TLS/SSL
           - **libwebsockets-full** - 完整的 WebSocket 库，支持 OpenSSL（替换官方版本）
           - **luci-app-ttyd** - ttyd 的 LuCI 网页界面
           
           ### 安装说明
-          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 23.05.3 设备
+          1. 将 IPK 文件上传到您的 RK3568 OpenWrt 24.10.4 设备
           2. 安装软件包 (按顺序安装):
           \`\`\`bash
-          # 首先安装自定义的 libwebsockets-full
+          # 首先安装 libuv 依赖
+          opkg install libuv_*.ipk
+          
+          # 然后安装自定义的 libwebsockets-full
           opkg install libwebsockets-full_*.ipk
           
-          # 然后安装 ttyd 和界面
+          # 最后安装 ttyd 和界面
           opkg install ttyd_*.ipk
           opkg install luci-app-ttyd_*.ipk
           \`\`\`
@@ -308,31 +348,31 @@ jobs:
           /etc/init.d/ttyd start
           \`\`\`
           
-          4. 通过 LuCI 界面配置 SSL:
-          - 访问 LuCI 管理界面
-          - 进入 "服务" -> "终端"
-          - 启用 SSL/TLS 并配置证书路径
-          
-          5. 或者手动生成 SSL 证书:
+          4. 配置 TTYD 使用 SSL (如果 LuCI 界面未自动配置):
           \`\`\`bash
-          # 创建 SSL 目录
-          mkdir -p /etc/ssl
+          # 编辑 ttyd 配置
+          uci set ttyd.@ttyd[0].ssl='1'
+          uci set ttyd.@ttyd[0].ssl_cert='/etc/uhttpd.crt'
+          uci set ttyd.@ttyd[0].ssl_key='/etc/uhttpd.key'
+          uci commit ttyd
+          /etc/init.d/ttyd restart
+          \`\`\`
           
-          # 生成自签名证书
-          openssl req -x509 -newkey rsa:2048 \\
-            -keyout /etc/ssl/ttyd.key \\
-            -out /etc/ssl/ttyd.crt \\
-            -days 365 -nodes \\
-            -subj '/CN=localhost'
-            
-          # 使用 SSL 启动 ttyd
-          ttyd --ssl --ssl-cert /etc/ssl/ttyd.crt --ssl-key /etc/ssl/ttyd.key bash
+          5. 或者使用系统已有的证书 (如果存在):
+          \`\`\`bash
+          # 检查系统证书
+          ls -la /etc/ssl/certs/
+          
+          # 使用现有证书启动 ttyd
+          ttyd --ssl --ssl-cert /path/to/cert.crt --ssl-key /path/to/cert.key -p 7681 bash
           \`\`\`
           
           6. 通过浏览器访问: \`https://您的设备IP:7681\`
           
           ### 重要说明
-          此构建使用自定义的 libwebsockets-full 包，完全替换了官方版本，确保完整的 SSL/TLS 支持。
+          - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
+          - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
+          - 所有软件包均针对 OpenWrt 24.10.4 和 RK3568 架构优化编译
           
           ### 文件列表
           EOF
@@ -345,12 +385,12 @@ jobs:
 
       - name: 生成包含日期和随机数的唯一标签
         id: tag_generator
-        if: steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
+        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
         run: |
           # 生成随机四位数
           RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
           # 构建标签：OpenWrt-ttyd-年月日-随机四位数
-          BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"
+          BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDUM_NUM}"
           echo "生成的标签: $BUILD_TAG"
           echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
 
@@ -359,7 +399,7 @@ jobs:
         run: |
           echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 23.05.3 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
+            --title "OpenWrt 24.10.4 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
             $SDK_DIR/upload/ttyd
@@ -369,7 +409,7 @@ jobs:
       - name: 上传产物到 GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: ttyd-https-packages-23.05.3
+          name: ttyd-https-packages-24.10.4
           path: |
             $SDK_DIR/upload/*.ipk
             $SDK_DIR/upload/ttyd
