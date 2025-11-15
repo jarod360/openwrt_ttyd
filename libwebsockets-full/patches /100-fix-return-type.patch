@@ -1,0 +1,14 @@
+mkdir -p package/libwebsockets-full/patches
+cat > package/libwebsockets-full/patches/001-fix-return-type.patch << 'EOF'
+--- a/lib/tls/openssl/openssl-server.c
++++ b/lib/tls/openssl/openssl-server.c
+@@ -710,7 +710,7 @@ lws_ssl_get_error(struct lws *wsi, int n)
+  *  returns 0: nothing to do, 1: async action started, 2: h2 stream gone
+  */
+ 
+-int
++enum lws_ssl_capable_status
+ lws_tls_server_abort_connection(struct lws *wsi)
+ {
+ 	if (!wsi->tls.ssl)
+EOF
