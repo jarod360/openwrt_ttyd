@@ -127,6 +127,17 @@ jobs:
           if [ -d "luci-app-ttyd" ]; then
             cp -r luci-app-ttyd $SDK_DIR/package/
             echo "✅ luci-app-ttyd 包已复制"
+            
+            # 验证 Makefile 是否存在且正确
+            if [ -f "$SDK_DIR/package/luci-app-ttyd/Makefile" ]; then
+              echo "✅ luci-app-ttyd Makefile 存在"
+              # 显示 Makefile 内容用于调试
+              echo "=== Makefile 内容 ==="
+              cat $SDK_DIR/package/luci-app-ttyd/Makefile
+            else
+              echo "❌ luci-app-ttyd Makefile 不存在"
+              exit 1
+            fi
           else
             echo "❌ luci-app-ttyd 目录未找到"
             exit 1
@@ -209,8 +220,11 @@ jobs:
             make package/libwebsockets-full/download V=s
           fi
           
+          echo "下载 ttyd 源码..."
           make package/ttyd/download V=s
-          make package/luci-app-ttyd/download V=s
+          
+          # LuCI 应用包通常不需要下载步骤，跳过 luci-app-ttyd 的下载
+          echo "跳过 luci-app-ttyd 下载步骤（LuCI 应用包使用本地文件）"
           
           echo "检查下载的文件:"
           find dl -size -1024c -exec ls -l {} \; || true
@@ -279,7 +293,25 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "🚀 开始编译 luci-app-ttyd..."
+          
+          # 首先检查包是否存在
+          if [ ! -d "package/luci-app-ttyd" ]; then
+            echo "❌ luci-app-ttyd 包目录不存在"
+            exit 1
+          fi
+          
+          echo "luci-app-ttyd 包内容:"
+          ls -la package/luci-app-ttyd/
+          
+          # 显示 Makefile 内容用于调试
+          echo "=== Makefile 内容 ==="
+          cat package/luci-app-ttyd/Makefile
+          
+          # 清理并编译
+          echo "开始清理..."
           make package/luci-app-ttyd/clean V=s
+          
+          echo "开始编译..."
           if make package/luci-app-ttyd/compile -j$(nproc) V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ luci-app-ttyd 编译成功"
