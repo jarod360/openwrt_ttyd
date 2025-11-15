@@ -37,7 +37,7 @@ jobs:
           python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
           swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
 
-      - name: 下载并解压 OpenWrt SDK
+      - name: 下载并解压 OpenWrt 24.10.4 SDK
         run: |
           wget -q ${{ env.SDK_URL }}
           file_name=$(echo ${{ env.SDK_URL }} | awk -F/ '{print $NF}')
@@ -54,82 +54,137 @@ jobs:
 
       - name: 复制自定义软件包到 SDK
         run: |
-          for pkg in libwebsockets-full ttyd luci-app-ttyd; do
-            if [ -d "$pkg" ]; then
-              cp -r "$pkg" $SDK_DIR/package/
-              echo "✅ $pkg 包已复制"
-            else
-              echo "❌ $pkg 目录未找到"
-              exit 1
-            fi
-          done
+          if [ -d "libwebsockets-full" ]; then
+            cp -r libwebsockets-full $SDK_DIR/package/
+          else
+            echo "libwebsockets-full 目录未找到"
+            exit 1
+          fi
+          if [ -d "ttyd" ]; then
+            cp -r ttyd $SDK_DIR/package/
+          else
+            echo "ttyd 目录未找到"
+            exit 1
+          fi
+          if [ -d "luci-app-ttyd" ]; then
+            cp -r luci-app-ttyd $SDK_DIR/package/
+          else
+            echo "luci-app-ttyd 目录未找到"
+            exit 1
+          fi
 
       - name: SSH 连接到 Actions (调试)
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event.inputs.ssh == 'true' }}
 
-      - name: 清理官方 libwebsockets 包
+      - name: 彻底清理官方 libwebsockets 包
         run: |
           cd $SDK_DIR
           ./scripts/feeds update -a
           ./scripts/feeds uninstall libwebsockets || true
-          rm -rf feeds/packages/libs/libwebsockets package/feeds/packages/libwebsockets
+          rm -rf feeds/packages/libs/libwebsockets
+          rm -rf package/feeds/packages/libwebsockets
           find . -type d -name "libwebsockets" ! -path "*/libwebsockets-full/*" ! -path "*/dl/*" -exec rm -rf {} + || true
-          rm -rf build_dir/target-*/libwebsockets* staging_dir/target-*/pkginfo/libwebsockets* || true
+          rm -rf build_dir/target-*/libwebsockets-* || true
+          rm -rf build_dir/target-*/libwebsockets || true
+          rm -rf staging_dir/target-*/pkginfo/libwebsockets* || true
 
       - name: 安装 feeds 并验证清理
         run: |
           cd $SDK_DIR
           ./scripts/feeds install -a
-          [ ! -d "feeds/packages/libs/libwebsockets" ] || exit 1
-          [ ! -d "package/feeds/packages/libwebsockets" ] || exit 1
+          if [ -d "feeds/packages/libs/libwebsockets" ] || [ -d "package/feeds/packages/libwebsockets" ]; then
+            echo "错误：官方 libwebsockets 仍然存在"
+            exit 1
+          fi
           find package -name "*libwebsockets*" -type d
 
       - name: 配置 OpenWrt 构建
         run: |
           cd $SDK_DIR
-          echo "CONFIG_TARGET_rockchip=y
-CONFIG_TARGET_rockchip_armv8=y
-CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y
-CONFIG_PACKAGE_libuv=y
-CONFIG_PACKAGE_libwebsockets-full=m
-CONFIG_PACKAGE_ttyd=m
-CONFIG_PACKAGE_luci-app-ttyd=m
-# CONFIG_PACKAGE_libwebsockets is not set
-# CONFIG_PACKAGE_libwebsockets-openssl is not set
-# CONFIG_PACKAGE_libwebsockets-mbedtls is not set" > .config
+          echo "CONFIG_TARGET_rockchip=y" > .config
+          echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
+          echo "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r5s=y" >> .config
+          echo "CONFIG_PACKAGE_libuv=y" >> .config
+          echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
+          echo "CONFIG_PACKAGE_ttyd=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
+          echo "# CONFIG_PACKAGE_libwebsockets is not set" >> .config
+          echo "# CONFIG_PACKAGE_libwebsockets-openssl is not set" >> .config
+          echo "# CONFIG_PACKAGE_libwebsockets-mbedtls is not set" >> .config
           make defconfig
-          grep -E "CONFIG_PACKAGE_(libuv|libwebsockets)" .config
+          grep -E "CONFIG_PACKAGE_(libuv|libwebsockets)" .config || echo "未找到相关配置"
 
       - name: 下载软件包源码
         run: |
           cd $SDK_DIR
           make package/feeds/packages/libuv/download V=s
-          [ -d "package/libwebsockets-full" ] && make package/libwebsockets-full/download V=s
+          if [ -d "package/libwebsockets-full" ]; then
+            make package/libwebsockets-full/download V=s
+          fi
           make package/ttyd/download V=s
           make package/luci-app-ttyd/download V=s
 
-      - name: 编译软件包
+      - name: 编译 libuv
+        id: compile_libuv
         run: |
           cd $SDK_DIR
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd; do
-            make package/$pkg/clean V=s
-            make package/$pkg/compile -j$(nproc) V=s || exit 1
-          done
+          make package/feeds/packages/libuv/clean V=s
+          if make package/feeds/packages/libuv/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 编译 libwebsockets-full
+        id: compile_libwebsockets
+        run: |
+          cd $SDK_DIR
+          make package/libwebsockets-full/clean V=s
+          if make package/libwebsockets-full/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 编译 ttyd
+        id: compile_ttyd
+        run: |
+          cd $SDK_DIR
+          make package/ttyd/clean V=s
+          if make package/ttyd/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 编译 luci-app-ttyd
+        id: compile_luci_app_ttyd
+        run: |
+          cd $SDK_DIR
+          make package/luci-app-ttyd/clean V=s
+          if make package/luci-app-ttyd/compile -j$(nproc) V=s; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
       - name: 收集构建产物
+        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
           cd $SDK_DIR
           mkdir -p upload
-          for pattern in "*libuv*.ipk" "*ttyd*.ipk" "*libwebsockets*.ipk" "*luci-app-ttyd*.ipk"; do
-            find bin -name "$pattern" -type f -exec cp {} upload/ \;
-          done
-          find build_dir -name "ttyd" -type f | while read f; do
-            cp "$f" upload/ttyd
-            chmod +x upload/ttyd
-            break
-          done
+          find bin -name "*libuv*.ipk" -type f -exec cp {} upload/ \;
+          find bin -name "*ttyd*.ipk" -type f -exec cp {} upload/ \;
+          find bin -name "*libwebsockets*.ipk" -type f -exec cp {} upload/ \;
+          find bin -name "*luci-app-ttyd*.ipk" -type f -exec cp {} upload/ \;
+          find build_dir -name "ttyd" -type f -exec cp {} upload/ttyd \; || true
+          chmod +x upload/ttyd || true
 
       - name: 生成发布信息
         id: release_info
@@ -139,44 +194,22 @@ CONFIG_PACKAGE_luci-app-ttyd=m
           LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f | head -1 | grep -o 'libuv[^_]*' | sed 's/libuv[^0-9]*//' || echo "未知版本")
           cat > upload/RELEASE_INFO.md << EOF
 ## 🌐 适用于 RK3568 的 TTYD (HTTPS/TLS) 构建 - OpenWrt 24.10.4
-
 ### 构建信息
-- **构建日期**: $BUILD_DATE
-- **OpenWrt 版本**: 24.10.4
-- **目标平台**: Rockchip ARMv8 (RK3568)
-- **代码库**: ${{ github.repository }}
-- **提交**: ${{ github.sha }}
-- **libuv 版本**: $LIBUV_VERSION
-- **libwebsockets**: 自定义完整版
-
-### 文件列表
-\`\`\`
+- 构建日期: $BUILD_DATE
+- OpenWrt 版本: 24.10.4
+- 目标平台: Rockchip ARMv8 (RK3568)
+- libuv 版本: $LIBUV_VERSION
 EOF
-          ls -la upload/ >> upload/RELEASE_INFO.md
-          echo '```' >> upload/RELEASE_INFO.md
+          echo "status=success" >> $GITHUB_OUTPUT
 
       - name: 生成唯一标签
         id: tag_generator
         run: |
           RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
           BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"
+          echo "生成的标签: $BUILD_TAG"
           echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
 
-      - name: 创建 GitHub Release
+      - name: 创建 GitHub 发布
         run: |
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 24.10.4 TTYD HTTPS 构建 for RK3568 $(date +'%Y-%m-%d')" \
-            --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
-            $SDK_DIR/upload/*.ipk \
-            $SDK_DIR/upload/ttyd
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 上传产物到 GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: ttyd-https-packages-24.10.4
-          path: |
-            $SDK_DIR/upload/*.ipk
-            $SDK_DIR/upload/ttyd
-          if-no-files-found: warn
