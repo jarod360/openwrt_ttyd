@@ -37,6 +37,7 @@ jobs:
           libreadline-dev libssl-dev libtool llvm lrzsz libnsl-dev ninja-build p7zip p7zip-full patch pkgconf \
           python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion \
           swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+
       - name: 下载并解压 OpenWrt 24.10.4 SDK
         run: |
           wget -q ${{ env.SDK_URL }}
@@ -51,35 +52,6 @@ jobs:
             exit 1
           fi
           echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
-      - name: 复制自定义软件包到 SDK
-        run: |
-          # 检查包目录是否存在
-          if [ -d "libwebsockets-full" ]; then
-            cp -r libwebsockets-full $SDK_DIR/package/
-            echo "✅ libwebsockets-full 包已复制"
-          else
-            echo "❌ libwebsockets-full 目录未找到"
-            exit 1
-          fi
-          
-          if [ -d "ttyd" ]; then
-            cp -r ttyd $SDK_DIR/package/
-            echo "✅ ttyd 包已复制"
-          else
-            echo "❌ ttyd 目录未找到"
-            exit 1
-          fi
-          # 复制 luci-app-ttyd 包
-          if [ -d "luci-app-ttyd" ]; then
-            cp -r luci-app-ttyd $SDK_DIR/package/
-            echo "✅ luci-app-ttyd 包已复制"
-          else
-            echo "❌ luci-app-ttyd 目录未找到"
-            exit 1
-          fi
-      - name: SSH 连接到 Actions (调试)
-        uses: mxschmitt/action-tmate@v3
-        if: ${{ github.event.inputs.ssh == 'true' }}
 
       - name: 彻底清理官方 libwebsockets 包
         run: |
@@ -107,13 +79,71 @@ jobs:
           rm -rf build_dir/target-*/libwebsockets-* || true
           rm -rf build_dir/target-*/libwebsockets || true
           rm -rf staging_dir/target-*/pkginfo/libwebsockets* || true
+
+      - name: 彻底清理官方 luci-app-ttyd 包
+        run: |
+          cd $SDK_DIR
+          echo "=== 开始彻底清理官方 luci-app-ttyd 包 ==="
+          
+          # 使用 feeds 命令卸载官方包
+          ./scripts/feeds uninstall luci-app-ttyd || true
+          
+          # 彻底删除所有官方 luci-app-ttyd 相关文件
+          echo "移除 feeds/luci/applications/luci-app-ttyd..."
+          rm -rf feeds/luci/applications/luci-app-ttyd
+          
+          echo "移除 package/feeds/luci/luci-app-ttyd..."
+          rm -rf package/feeds/luci/luci-app-ttyd
+          
+          echo "搜索并移除其他位置的 luci-app-ttyd 包..."
+          find . -type d -name "luci-app-ttyd" ! -path "*/luci-app-ttyd/*" ! -path "*/dl/*" -exec echo "移除: {}" \; -exec rm -rf {} + || true
+          
+          # 清理构建缓存
+          echo "清理构建缓存..."
+          rm -rf build_dir/target-*/luci-app-ttyd-* || true
+          rm -rf build_dir/target-*/luci-app-ttyd || true
+          rm -rf staging_dir/target-*/pkginfo/luci-app-ttyd* || true
+
+      - name: 复制自定义软件包到 SDK
+        run: |
+          # 检查包目录是否存在
+          if [ -d "libwebsockets-full" ]; then
+            cp -r libwebsockets-full $SDK_DIR/package/
+            echo "✅ libwebsockets-full 包已复制"
+          else
+            echo "❌ libwebsockets-full 目录未找到"
+            exit 1
+          fi
+          
+          if [ -d "ttyd" ]; then
+            cp -r ttyd $SDK_DIR/package/
+            echo "✅ ttyd 包已复制"
+          else
+            echo "❌ ttyd 目录未找到"
+            exit 1
+          fi
+          
+          # 复制 luci-app-ttyd 包
+          if [ -d "luci-app-ttyd" ]; then
+            cp -r luci-app-ttyd $SDK_DIR/package/
+            echo "✅ luci-app-ttyd 包已复制"
+          else
+            echo "❌ luci-app-ttyd 目录未找到"
+            exit 1
+          fi
+
+      - name: SSH 连接到 Actions (调试)
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event.inputs.ssh == 'true' }}
+
       - name: 安装 feeds 并验证清理
         run: |
           cd $SDK_DIR
-          echo "=== 安装 feeds（不包含官方 libwebsockets）==="
+          echo "=== 安装 feeds（不包含官方包）==="
           ./scripts/feeds install -a
           
-          echo "=== 验证官方 libwebsockets 包是否已彻底删除 ==="
+          echo "=== 验证官方包是否已彻底删除 ==="
+          # 验证 libwebsockets
           if [ -d "feeds/packages/libs/libwebsockets" ]; then
             echo "❌ 错误：feeds/packages/libs/libwebsockets 仍然存在"
             exit 1
@@ -124,9 +154,22 @@ jobs:
             exit 1
           fi
           
-          echo "✅ 官方 libwebsockets 包已彻底删除"
-          echo "✅ 自定义 libwebsockets-full 包状态："
+          # 验证 luci-app-ttyd
+          if [ -d "feeds/luci/applications/luci-app-ttyd" ]; then
+            echo "❌ 错误：feeds/luci/applications/luci-app-ttyd 仍然存在"
+            exit 1
+          fi
+          
+          if [ -d "package/feeds/luci/luci-app-ttyd" ]; then
+            echo "❌ 错误：package/feeds/luci/luci-app-ttyd 仍然存在"
+            exit 1
+          fi
+          
+          echo "✅ 所有官方包已彻底删除"
+          echo "✅ 自定义包状态："
           find package -name "*libwebsockets*" -type d
+          find package -name "*luci-app-ttyd*" -type d
+
       - name: 配置 OpenWrt 构建
         run: |
           cd $SDK_DIR
@@ -153,6 +196,7 @@ jobs:
           echo "=== 最终配置检查 ==="
           echo "libuv 和 libwebsockets 相关配置:"
           grep -E "CONFIG_PACKAGE_(libuv|libwebsockets)" .config || echo "未找到相关配置"
+
       - name: 下载软件包源码
         run: |
           cd $SDK_DIR
@@ -170,6 +214,7 @@ jobs:
           
           echo "检查下载的文件:"
           find dl -size -1024c -exec ls -l {} \; || true
+
       - name: 编译 libuv
         id: compile_libuv
         run: |
@@ -190,6 +235,7 @@ jobs:
             echo "❌ libuv 编译失败"
             exit 1
           fi
+
       - name: 编译 libwebsockets-full
         id: compile_libwebsockets
         run: |
@@ -211,6 +257,7 @@ jobs:
             echo "❌ libwebsockets-full 编译失败"
             exit 1
           fi
+
       - name: 编译 ttyd
         id: compile_ttyd
         run: |
@@ -226,6 +273,7 @@ jobs:
             echo "❌ ttyd 编译失败"
             exit 1
           fi
+
       - name: 编译 luci-app-ttyd
         id: compile_luci_app_ttyd
         run: |
@@ -241,6 +289,7 @@ jobs:
             exit 1
           fi
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+
       - name: 收集构建产物
         if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
         run: |
@@ -265,6 +314,7 @@ jobs:
             echo "找到 libwebsockets IPK: $file"
             cp "$file" upload/
           done
+          
           # 查找 luci-app-ttyd IPK 文件
           find bin -name "*luci-app-ttyd*.ipk" -type f | while read file; do
             echo "找到 luci-app-ttyd IPK: $file"
@@ -284,6 +334,7 @@ jobs:
           
           echo "📁 上传目录内容:"
           ls -la upload/
+
       - name: 生成发布信息
         id: release_info
         if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success'
@@ -311,7 +362,7 @@ jobs:
           - **libuv** - 异步 I/O 库，提供事件循环支持
           - **ttyd** - 通过网络共享您的终端，支持 TLS/SSL
           - **libwebsockets-full** - 完整的 WebSocket 库，支持 OpenSSL（替换官方版本）
-          - **luci-app-ttyd** - ttyd 的 LuCI 网页界面
+          - **luci-app-ttyd** - ttyd 的 LuCI 网页界面（自定义版本）
           
           ### 安装说明
           1. 将 IPK 文件上传到您的 RK3568 OpenWrt 24.10.4 设备
@@ -358,6 +409,7 @@ jobs:
           ### 重要说明
           - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
           - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
+          - 使用自定义的 luci-app-ttyd 包，完全替换了官方版本
           - 所有软件包均针对 OpenWrt 24.10.4 和 RK3568 架构优化编译
           
           ### 文件列表
@@ -368,6 +420,7 @@ jobs:
           echo '```' >> upload/RELEASE_INFO.md
           
           echo "status=success" >> $GITHUB_OUTPUT
+
       - name: 生成包含日期和随机数的唯一标签
         id: tag_generator
         if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
@@ -378,6 +431,7 @@ jobs:
           BUILD_TAG="OpenWrt-ttyd-$(date +%Y%m%d)-${RANDOM_NUM}"
           echo "生成的标签: $BUILD_TAG"
           echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
+
       - name: 创建 GitHub 发布
         if: steps.tag_generator.outputs.tag_name
         run: |
