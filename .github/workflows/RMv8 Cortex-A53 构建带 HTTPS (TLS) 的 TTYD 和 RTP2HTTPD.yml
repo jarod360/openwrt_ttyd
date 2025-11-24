@@ -14,8 +14,8 @@ permissions:
 
 env:
   TZ: Asia/Shanghai
-  # 使用 OpenWrt 24.10.4 SDK for ARMv8 Cortex-A53
-  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/armvirt/64/openwrt-sdk-24.10.4-armvirt-64_gcc-13.3.0_musl.Linux-x86_64.tar.xz
+  # 使用 OpenWrt 24.10.4 SDK for armsr/armv8 (ARMv8 通用架构)
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/armsr/armv8/openwrt-sdk-24.10.4-armsr-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
 
 jobs:
   build:
@@ -211,10 +211,10 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "=== 配置构建目标 ==="
-          # 配置为通用的 ARMv8 Cortex-A53 目标
-          echo "CONFIG_TARGET_armvirt=y" > .config
-          echo "CONFIG_TARGET_armvirt_64=y" >> .config
-          echo "CONFIG_TARGET_armvirt_64_Default=y" >> .config
+          # 配置为 armsr/armv8 目标 (ARMv8 通用架构)
+          echo "CONFIG_TARGET_armsr=y" > .config
+          echo "CONFIG_TARGET_armsr_armv8=y" >> .config
+          echo "CONFIG_TARGET_armsr_armv8_Default=y" >> .config
           # 选择中文语言支持
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
           
@@ -490,14 +490,14 @@ jobs:
           ### 构建信息
           - **构建日期**: $BUILD_DATE
           - **OpenWrt 版本**: 24.10.4
-          - **目标架构**: ARMv8 Cortex-A53 (aarch64)
+          - **目标架构**: ARMv8 (armsr/armv8)
           - **代码库**: ${{ github.repository }}
           - **提交**: ${{ github.sha }}
           - **libuv 版本**: $LIBUV_VERSION
           - **libwebsockets**: 自定义完整版（完全替换官方版本）
           
           ### 兼容设备
-          此构建适用于所有使用 **ARMv8 Cortex-A53** 架构的设备，包括但不限于：
+          此构建适用于所有使用 **ARMv8** 架构的设备，包括但不限于：
           - **Qualcomm IPQ5322** 系列路由器
           - **Qualcomm IPQ5018** 系列路由器  
           - **Rockchip RK3568** 开发板
@@ -513,7 +513,7 @@ jobs:
           - **luci-app-rtp2httpd** - rtp2httpd 的 LuCI 网页界面
           
           ### 安装说明
-          1. 将 IPK 文件上传到您的 ARMv8 Cortex-A53 OpenWrt 24.10.4 设备
+          1. 将 IPK 文件上传到您的 ARMv8 OpenWrt 24.10.4 设备
           2. 安装软件包 (按顺序安装):
           \`\`\`bash
           # 首先安装 libuv 依赖
@@ -559,7 +559,7 @@ jobs:
           ### 重要说明
           - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
           - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
-          - 所有软件包均针对 OpenWrt 24.10.4 和 ARMv8 Cortex-A53 架构优化编译
+          - 所有软件包均针对 OpenWrt 24.10.4 和 ARMv8 架构优化编译
           - 确保设备有足够的存储空间安装所有软件包
           
           ### 文件列表
@@ -587,7 +587,7 @@ jobs:
         run: |
           echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 24.10.4 TTYD & RTP2HTTPD 构建 for ARMv8 Cortex-A53 $(date +'%Y-%m-%d')" \
+            --title "OpenWrt 24.10.4 TTYD & RTP2HTTPD 构建 for ARMv8 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
             $SDK_DIR/upload/ttyd \
@@ -598,7 +598,7 @@ jobs:
       - name: 上传产物到 GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: ttyd-rtp2httpd-packages-24.10.4-armv8-cortex-a53
+          name: ttyd-rtp2httpd-packages-24.10.4-armsr-armv8
           path: |
             $SDK_DIR/upload/*.ipk
             $SDK_DIR/upload/ttyd
