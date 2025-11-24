@@ -1,4 +1,4 @@
-name: 为 IPQ5322 构建带 HTTPS (TLS) 的 TTYD 和 RTP2HTTPD，使用 OpenWrt 24.10.4
+name: 为 ARMv8 Cortex-A53 构建带 HTTPS (TLS) 的 TTYD 和 RTP2HTTPD，使用 OpenWrt 24.10.4
 
 on:
   workflow_dispatch:
@@ -14,8 +14,8 @@ permissions:
 
 env:
   TZ: Asia/Shanghai
-  # 使用 OpenWrt 24.10.4 SDK for IPQ53xx ARMv8
-  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/ipq53xx/generic/openwrt-sdk-24.10.4-ipq53xx-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+  # 使用 OpenWrt 24.10.4 SDK for ARMv8 Cortex-A53
+  SDK_URL: https://downloads.openwrt.org/releases/24.10.4/targets/armvirt/64/openwrt-sdk-24.10.4-armvirt-64_gcc-13.3.0_musl.Linux-x86_64.tar.xz
 
 jobs:
   build:
@@ -211,10 +211,10 @@ jobs:
         run: |
           cd $SDK_DIR
           echo "=== 配置构建目标 ==="
-          # 配置为 IPQ53xx 目标 (IPQ5322)
-          echo "CONFIG_TARGET_ipq53xx=y" > .config
-          echo "CONFIG_TARGET_ipq53xx_generic=y" >> .config
-          echo "CONFIG_TARGET_ipq53xx_generic_DEVICE_redmi_ax3000=y" >> .config
+          # 配置为通用的 ARMv8 Cortex-A53 目标
+          echo "CONFIG_TARGET_armvirt=y" > .config
+          echo "CONFIG_TARGET_armvirt_64=y" >> .config
+          echo "CONFIG_TARGET_armvirt_64_Default=y" >> .config
           # 选择中文语言支持
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
           
@@ -485,16 +485,24 @@ jobs:
           LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f | head -1 | grep -o 'libuv[^_]*' | sed 's/libuv[^0-9]*//' || echo "未知版本")
           
           cat > upload/RELEASE_INFO.md << EOF
-          ## 🌐 适用于 IPQ5322 的 TTYD (HTTPS/TLS) 和 RTP2HTTPD 构建 - OpenWrt 24.10.4
+          ## 🌐 适用于 ARMv8 Cortex-A53 的 TTYD (HTTPS/TLS) 和 RTP2HTTPD 构建 - OpenWrt 24.10.4
           
           ### 构建信息
           - **构建日期**: $BUILD_DATE
           - **OpenWrt 版本**: 24.10.4
-          - **目标平台**: Qualcomm IPQ53xx (IPQ5322)
+          - **目标架构**: ARMv8 Cortex-A53 (aarch64)
           - **代码库**: ${{ github.repository }}
           - **提交**: ${{ github.sha }}
           - **libuv 版本**: $LIBUV_VERSION
           - **libwebsockets**: 自定义完整版（完全替换官方版本）
+          
+          ### 兼容设备
+          此构建适用于所有使用 **ARMv8 Cortex-A53** 架构的设备，包括但不限于：
+          - **Qualcomm IPQ5322** 系列路由器
+          - **Qualcomm IPQ5018** 系列路由器  
+          - **Rockchip RK3568** 开发板
+          - **Allwinner H616** 系列设备
+          - 其他 ARMv8 Cortex-A53 架构的 OpenWrt 设备
           
           ### 包含的软件包
           - **libuv** - 异步 I/O 库，提供事件循环支持
@@ -505,7 +513,7 @@ jobs:
           - **luci-app-rtp2httpd** - rtp2httpd 的 LuCI 网页界面
           
           ### 安装说明
-          1. 将 IPK 文件上传到您的 IPQ5322 OpenWrt 24.10.4 设备
+          1. 将 IPK 文件上传到您的 ARMv8 Cortex-A53 OpenWrt 24.10.4 设备
           2. 安装软件包 (按顺序安装):
           \`\`\`bash
           # 首先安装 libuv 依赖
@@ -551,7 +559,7 @@ jobs:
           ### 重要说明
           - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
           - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
-          - 所有软件包均针对 OpenWrt 24.10.4 和 IPQ5322 架构优化编译
+          - 所有软件包均针对 OpenWrt 24.10.4 和 ARMv8 Cortex-A53 架构优化编译
           - 确保设备有足够的存储空间安装所有软件包
           
           ### 文件列表
@@ -579,7 +587,7 @@ jobs:
         run: |
           echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
           gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 24.10.4 TTYD & RTP2HTTPD 构建 for IPQ5322 $(date +'%Y-%m-%d')" \
+            --title "OpenWrt 24.10.4 TTYD & RTP2HTTPD 构建 for ARMv8 Cortex-A53 $(date +'%Y-%m-%d')" \
             --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
             $SDK_DIR/upload/*.ipk \
             $SDK_DIR/upload/ttyd \
@@ -590,7 +598,7 @@ jobs:
       - name: 上传产物到 GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: ttyd-rtp2httpd-packages-24.10.4-ipq5322
+          name: ttyd-rtp2httpd-packages-24.10.4-armv8-cortex-a53
           path: |
             $SDK_DIR/upload/*.ipk
             $SDK_DIR/upload/ttyd
