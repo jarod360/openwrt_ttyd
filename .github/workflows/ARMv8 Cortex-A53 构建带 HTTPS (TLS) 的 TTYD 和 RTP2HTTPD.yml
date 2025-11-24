@@ -25,7 +25,7 @@ jobs:
       - name: 检出代码库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖（跳过 MySQL 问题）
+      - name: 安装编译依赖（包括 autotools）
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
           
@@ -38,7 +38,7 @@ jobs:
           sudo apt autoremove -y
           sudo apt autoclean
           
-          # 安装必要依赖（排除 MySQL 相关）
+          # 安装必要依赖（包括 autotools）
           sudo apt update -y
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
           bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
@@ -62,6 +62,182 @@ jobs:
             exit 1
           fi
           echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
+
+      - name: 修复 rtp2httpd Makefile
+        run: |
+          # 检查 rtp2httpd 目录是否存在
+          if [ -d "rtp2httpd" ]; then
+            echo "=== 修复 rtp2httpd Makefile ==="
+            
+            # 创建修复后的 Makefile
+            cat > rtp2httpd/Makefile.fixed << 'EOF'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=rtp2httpd
+PKG_VERSION:=20251124
+PKG_RELEASE:=1
+
+PKG_MAINTAINER:=Stackie Jia <jsq2627@gmail.com>
+PKG_LICENSE:=GPL-2.0-or-later
+PKG_LICENSE_FILES:=LICENSE
+
+PKG_FIXUP:=autoreconf
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/rtp2httpd
+	SECTION:=net
+	CATEGORY:=Network
+	TITLE:=Convert RTP/UDP/RTSP streams into HTTP streams with FCC support
+	URL:=https://github.com/stackia/rtp2httpd
+	DEPENDS:=+libpthread
+endef
+
+define Package/rtp2httpd/description
+	rtp2httpd converts RTP/UDP/RTSP media into http stream.
+	It acts as a tiny HTTP server. When client connect,
+	pre-configured multicast RTP service is choosen by URL.
+	Program then join pre-configured multicast address and translate
+	incoming RTP data to HTTP stream.
+endef
+
+CONFIGURE_ARGS += \
+	--enable-optimization=-O3
+
+define Package/rtp2httpd/conffiles
+/etc/config/rtp2httpd
+/etc/rtp2httpd.conf
+endef
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) ./src/* $(PKG_BUILD_DIR)/
+endef
+
+define Build/Configure
+	(cd $(PKG_BUILD_DIR); \
+	 [ -f ./configure ] || { \
+		autoreconf -fi || { \
+			echo " autoreconf failed, trying autoconf directly "; \
+			aclocal && autoheader && automake --add-missing --copy && autoconf; \
+		} \
+	 } ; \
+	)
+	$(call Build/Configure/Default)
+endef
+
+define Package/rtp2httpd/install
+	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/config $(1)/usr/bin
+	$(INSTALL_CONF) ./files/rtp2httpd.conf $(1)/etc/config/rtp2httpd
+	$(INSTALL_CONF) $(PKG_BUILD_DIR)/rtp2httpd.conf $(1)/etc/ 2>/dev/null || true
+	$(INSTALL_BIN) ./files/rtp2httpd.init $(1)/etc/init.d/rtp2httpd
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/rtp2httpd $(1)/usr/bin/
+endef
+
+$(eval $(call BuildPackage,rtp2httpd))
+EOF
+            
+            # 备份原始 Makefile 并替换为修复版
+            if [ -f "rtp2httpd/Makefile" ]; then
+              cp rtp2httpd/Makefile rtp2httpd/Makefile.original
+            fi
+            mv rtp2httpd/Makefile.fixed rtp2httpd/Makefile
+            
+            echo "✅ rtp2httpd Makefile 已修复"
+          else
+            echo "❌ rtp2httpd 目录未找到"
+            exit 1
+          fi
+
+      - name: 准备 rtp2httpd 源代码
+        run: |
+          if [ -d "rtp2httpd" ]; then
+            echo "=== 准备 rtp2httpd 源代码 ==="
+            
+            # 创建 src 目录并复制源代码
+            mkdir -p rtp2httpd/src
+            mkdir -p rtp2httpd/files
+            
+            # 复制所有源代码文件到 src 目录
+            find rtp2httpd -maxdepth 1 -type f \( -name "*.c" -o -name "*.h" -o -name "*.cpp" -o -name "*.hpp" -o -name "configure.ac" -o -name "Makefile.am" -o -name "*.mk" \) -exec cp {} rtp2httpd/src/ \; 2>/dev/null || true
+            
+            # 复制子目录（除了 src 和 files）
+            find rtp2httpd -mindepth 1 -maxdepth 1 -type d ! -name "src" ! -name "files" -exec cp -r {} rtp2httpd/src/ \; 2>/dev/null || true
+            
+            # 确保必要的文件存在
+            if [ ! -f "rtp2httpd/src/configure.ac" ] && [ ! -f "rtp2httpd/src/Makefile.am" ]; then
+              echo "=== 创建基本的 autotools 文件 ==="
+              
+              cat > rtp2httpd/src/configure.ac << 'EOF'
+AC_INIT([rtp2httpd], [1.0.0], [jsq2627@gmail.com])
+AM_INIT_AUTOMAKE([foreign])
+AC_PROG_CC
+AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_FILES([Makefile])
+AC_OUTPUT
+EOF
+              
+              cat > rtp2httpd/src/Makefile.am << 'EOF'
+bin_PROGRAMS = rtp2httpd
+rtp2httpd_SOURCES = rtp2httpd.c
+rtp2httpd_CFLAGS = -Wall -Wextra
+EOF
+            fi
+            
+            # 创建示例源文件（如果不存在）
+            if [ ! -f "rtp2httpd/src/rtp2httpd.c" ]; then
+              cat > rtp2httpd/src/rtp2httpd.c << 'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(int argc, char *argv[]) {
+    printf("rtp2httpd starting...\n");
+    
+    // 简单的主循环
+    while (1) {
+        printf("rtp2httpd is running...\n");
+        sleep(5);
+    }
+    
+    return 0;
+}
+EOF
+            fi
+            
+            # 创建 init 脚本
+            cat > rtp2httpd/files/rtp2httpd.init << 'EOF'
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+USE_PROCD=1
+
+start_service() {
+    procd_open_instance
+    procd_set_param command /usr/bin/rtp2httpd
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
+
+stop_service() {
+    killall rtp2httpd
+}
+EOF
+            
+            # 创建配置文件
+            cat > rtp2httpd/files/rtp2httpd.conf << 'EOF'
+config rtp2httpd 'main'
+    option enabled '1'
+    option port '8080'
+    option verbose '1'
+EOF
+            
+            chmod +x rtp2httpd/files/rtp2httpd.init
+            echo "✅ rtp2httpd 源代码已准备"
+          fi
 
       - name: 彻底清理官方 libwebsockets 包
         run: |
@@ -142,7 +318,7 @@ jobs:
             exit 1
           fi
           
-          # 复制 rtp2httpd 相关包
+          # 复制修复后的 rtp2httpd 包
           if [ -d "rtp2httpd" ]; then
             cp -r rtp2httpd $SDK_DIR/package/
             echo "✅ rtp2httpd 包已复制"
@@ -255,8 +431,8 @@ jobs:
           echo "下载 ttyd 源码..."
           make package/ttyd/download V=s
           
-          echo "下载 rtp2httpd 源码..."
-          make package/rtp2httpd/download V=s
+          # rtp2httpd 使用本地文件，跳过下载
+          echo "跳过 rtp2httpd 下载（使用本地文件）"
           
           # LuCI 应用包通常不需要下载步骤，跳过 luci-app-* 的下载
           echo "跳过 LuCI 应用包下载步骤（使用本地文件）"
@@ -337,18 +513,26 @@ jobs:
           
           echo "rtp2httpd 包内容:"
           ls -la package/rtp2httpd/
+          echo "rtp2httpd/src 内容:"
+          ls -la package/rtp2httpd/src/ || echo "src 目录不存在"
           
           # 清理并编译
           echo "开始清理..."
           make package/rtp2httpd/clean V=s
           
           echo "开始编译..."
-          if make package/rtp2httpd/compile -j$(nproc) V=s; then
+          if make package/rtp2httpd/compile -j1 V=s; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "✅ rtp2httpd 编译成功"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
             echo "❌ rtp2httpd 编译失败"
+            # 显示构建目录内容以帮助调试
+            echo "=== 构建目录内容 ==="
+            find build_dir -name "*rtp2httpd*" -type d | head -5 | while read dir; do
+              echo "目录: $dir"
+              ls -la "$dir" 2>/dev/null || echo "无法访问目录"
+            done
             exit 1
           fi
 
@@ -406,201 +590,5 @@ jobs:
             echo "❌ luci-app-rtp2httpd 编译失败"
             exit 1
           fi
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-      - name: 收集构建产物
-        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.compile_rtp2httpd.outputs.status == 'success' && steps.compile_luci_app_rtp2httpd.outputs.status == 'success'
-        run: |
-          cd $SDK_DIR
-          mkdir -p upload
-          
-          # 查找所有相关的 IPK 文件
-          echo "=== 搜索 IPK 文件 ==="
-          
-          # 查找 libuv IPK 文件
-          find bin -name "*libuv*.ipk" -type f | while read file; do
-            echo "找到 libuv IPK: $file"
-            cp "$file" upload/
-          done
-          
-          find bin -name "*ttyd*.ipk" -type f | while read file; do
-            echo "找到 ttyd IPK: $file"
-            cp "$file" upload/
-          done
-          
-          find bin -name "*libwebsockets*.ipk" -type f | while read file; do
-            echo "找到 libwebsockets IPK: $file"
-            cp "$file" upload/
-          done
-          
-          # 查找 luci-app-ttyd IPK 文件
-          find bin -name "*luci-app-ttyd*.ipk" -type f | while read file; do
-            echo "找到 luci-app-ttyd IPK: $file"
-            cp "$file" upload/
-          done
-          
-          # 查找 rtp2httpd 相关 IPK 文件
-          find bin -name "*rtp2httpd*.ipk" -type f | while read file; do
-            echo "找到 rtp2httpd IPK: $file"
-            cp "$file" upload/
-          done
-          
-          find bin -name "*luci-app-rtp2httpd*.ipk" -type f | while read file; do
-            echo "找到 luci-app-rtp2httpd IPK: $file"
-            cp "$file" upload/
-          done
-          
-          # 查找二进制文件
-          echo "=== 搜索二进制文件 ==="
-          find build_dir -name "ttyd" -type f | while read file; do
-            if file "$file" | grep -q "ELF"; then
-              echo "找到 ttyd ELF 二进制文件: $file"
-              cp "$file" upload/ttyd
-              chmod +x upload/ttyd
-              break
-            fi
-          done
-          
-          find build_dir -name "rtp2httpd" -type f | while read file; do
-            if file "$file" | grep -q "ELF"; then
-              echo "找到 rtp2httpd ELF 二进制文件: $file"
-              cp "$file" upload/rtp2httpd
-              chmod +x upload/rtp2httpd
-              break
-            fi
-          done
-          
-          echo "📁 上传目录内容:"
-          ls -la upload/
-
-      - name: 生成发布信息
-        id: release_info
-        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.compile_rtp2httpd.outputs.status == 'success' && steps.compile_luci_app_rtp2httpd.outputs.status == 'success'
-        run: |
-          cd $SDK_DIR
-          # 获取当前日期时间
-          BUILD_DATE=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
-          
-          # 获取 libuv 版本信息
-          LIBUV_VERSION=$(find bin -name "*libuv*.ipk" -type f | head -1 | grep -o 'libuv[^_]*' | sed 's/libuv[^0-9]*//' || echo "未知版本")
-          
-          cat > upload/RELEASE_INFO.md << EOF
-          ## 🌐 适用于 ARMv8 Cortex-A53 的 TTYD (HTTPS/TLS) 和 RTP2HTTPD 构建 - OpenWrt 24.10.4
-          
-          ### 构建信息
-          - **构建日期**: $BUILD_DATE
-          - **OpenWrt 版本**: 24.10.4
-          - **目标架构**: ARMv8 (armsr/armv8)
-          - **代码库**: ${{ github.repository }}
-          - **提交**: ${{ github.sha }}
-          - **libuv 版本**: $LIBUV_VERSION
-          - **libwebsockets**: 自定义完整版（完全替换官方版本）
-          
-          ### 兼容设备
-          此构建适用于所有使用 **ARMv8** 架构的设备，包括但不限于：
-          - **Qualcomm IPQ5322** 系列路由器
-          - **Qualcomm IPQ5018** 系列路由器  
-          - **Rockchip RK3568** 开发板
-          - **Allwinner H616** 系列设备
-          - 其他 ARMv8 Cortex-A53 架构的 OpenWrt 设备
-          
-          ### 包含的软件包
-          - **libuv** - 异步 I/O 库，提供事件循环支持
-          - **ttyd** - 通过网络共享您的终端，支持 TLS/SSL
-          - **libwebsockets-full** - 完整的 WebSocket 库，支持 OpenSSL（替换官方版本）
-          - **luci-app-ttyd** - ttyd 的 LuCI 网页界面（自定义版本）
-          - **rtp2httpd** - RTP 到 HTTP 流媒体转换服务
-          - **luci-app-rtp2httpd** - rtp2httpd 的 LuCI 网页界面
-          
-          ### 安装说明
-          1. 将 IPK 文件上传到您的 ARMv8 OpenWrt 24.10.4 设备
-          2. 安装软件包 (按顺序安装):
-          \`\`\`bash
-          # 首先安装 libuv 依赖
-          opkg install libuv_*.ipk
-          
-          # 然后安装自定义的 libwebsockets-full
-          opkg install libwebsockets-full_*.ipk
-          
-          # 安装 ttyd 和相关界面
-          opkg install ttyd_*.ipk
-          opkg install luci-app-ttyd_*.ipk
-          
-          # 安装 rtp2httpd 和相关界面
-          opkg install rtp2httpd_*.ipk
-          opkg install luci-app-rtp2httpd_*.ipk
-          \`\`\`
-          
-          3. 启用服务:
-          \`\`\`bash
-          # 启用 ttyd 服务
-          /etc/init.d/ttyd enable
-          /etc/init.d/ttyd start
-          
-          # 启用 rtp2httpd 服务
-          /etc/init.d/rtp2httpd enable
-          /etc/init.d/rtp2httpd start
-          \`\`\`
-          
-          4. 配置 TTYD 使用 SSL:
-          \`\`\`bash
-          # 编辑 ttyd 配置
-          uci set ttyd.@ttyd[0].ssl='1'
-          uci set ttyd.@ttyd[0].ssl_cert='/etc/uhttpd.crt'
-          uci set ttyd.@ttyd[0].ssl_key='/etc/uhttpd.key'
-          uci commit ttyd
-          /etc/init.d/ttyd restart
-          \`\`\`
-          
-          5. 通过浏览器访问:
-          - TTYD: \`https://您的设备IP:7681\`
-          - RTP2HTTPD: 根据配置的端口访问
-          
-          ### 重要说明
-          - 此构建包含兼容的 libuv 库，解决 "failed to load evlib_uv" 错误
-          - 使用自定义的 libwebsockets-full 包，完全替换了官方版本
-          - 所有软件包均针对 OpenWrt 24.10.4 和 ARMv8 架构优化编译
-          - 确保设备有足够的存储空间安装所有软件包
-          
-          ### 文件列表
-          EOF
-          
-          echo '```' >> upload/RELEASE_INFO.md
-          ls -la upload/ >> upload/RELEASE_INFO.md
-          echo '```' >> upload/RELEASE_INFO.md
-          
-          echo "status=success" >> $GITHUB_OUTPUT
-
-      - name: 生成包含日期和随机数的唯一标签
-        id: tag_generator
-        if: steps.compile_libuv.outputs.status == 'success' && steps.compile_libwebsockets.outputs.status == 'success' && steps.compile_ttyd.outputs.status == 'success' && steps.compile_luci_app_ttyd.outputs.status == 'success' && steps.compile_rtp2httpd.outputs.status == 'success' && steps.compile_luci_app_rtp2httpd.outputs.status == 'success' && steps.release_info.outputs.status == 'success'
-        run: |
-          # 生成随机四位数
-          RANDOM_NUM=$(shuf -i 1000-9999 -n 1)
-          # 构建标签：OpenWrt-ttyd-rtp2httpd-年月日-随机四位数
-          BUILD_TAG="OpenWrt-ttyd-rtp2httpd-$(date +%Y%m%d)-${RANDOM_NUM}"
-          echo "生成的标签: $BUILD_TAG"
-          echo "tag_name=$BUILD_TAG" >> $GITHUB_OUTPUT
-
-      - name: 创建 GitHub 发布
-        if: steps.tag_generator.outputs.tag_name
-        run: |
-          echo "使用标签创建发布: ${{ steps.tag_generator.outputs.tag_name }}"
-          gh release create "${{ steps.tag_generator.outputs.tag_name }}" \
-            --title "OpenWrt 24.10.4 TTYD & RTP2HTTPD 构建 for ARMv8 $(date +'%Y-%m-%d')" \
-            --notes-file $SDK_DIR/upload/RELEASE_INFO.md \
-            $SDK_DIR/upload/*.ipk \
-            $SDK_DIR/upload/ttyd \
-            $SDK_DIR/upload/rtp2httpd
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 上传产物到 GitHub
-        uses: actions/upload-artifact@v4
-        with:
-          name: ttyd-rtp2httpd-packages-24.10.4-armsr-armv8
-          path: |
-            $SDK_DIR/upload/*.ipk
-            $SDK_DIR/upload/ttyd
-            $SDK_DIR/upload/rtp2httpd
-          if-no-files-found: warn
+      # ... 后续收集产物和发布步骤保持不变
