@@ -28,7 +28,24 @@ export RELEASE_VERSION
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) $(CURDIR)/../../* $(PKG_BUILD_DIR)/
+	# 只复制源代码文件，避免递归复制 build_dir
+	$(CP) $(CURDIR)/../.. $(PKG_BUILD_DIR)/../
+	# 删除可能引起冲突的构建目录
+	rm -rf $(PKG_BUILD_DIR)/../../build_dir
+	rm -rf $(PKG_BUILD_DIR)/../../staging_dir
+	rm -rf $(PKG_BUILD_DIR)/../../tmp
+endef
+
+define Build/Configure
+	(cd $(PKG_BUILD_DIR)/../..; \
+	 [ -f ./configure ] || { \
+		autoreconf -fi || { \
+			echo " autoreconf failed, trying autoconf directly "; \
+			aclocal && autoheader && automake --add-missing --copy && autoconf; \
+		} \
+	 } ; \
+	)
+	$(call Build/Configure/Default)
 endef
 
 define Package/rtp2httpd
@@ -36,6 +53,7 @@ define Package/rtp2httpd
 	CATEGORY:=Network
 	TITLE:=Convert RTP/UDP/RTSP streams into HTTP streams with FCC support
 	URL:=https://github.com/stackia/rtp2httpd
+	DEPENDS:=+libpthread
 endef
 
 define Package/rtp2httpd/description
@@ -57,9 +75,9 @@ endef
 define Package/rtp2httpd/install
 	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/config $(1)/usr/bin
 	$(INSTALL_CONF) ./files/rtp2httpd.conf $(1)/etc/config/rtp2httpd
-	$(INSTALL_CONF) $(PKG_BUILD_DIR)/rtp2httpd.conf $(1)/etc
+	$(INSTALL_CONF) $(PKG_BUILD_DIR)/../../rtp2httpd.conf $(1)/etc/ 2>/dev/null || true
 	$(INSTALL_BIN) ./files/rtp2httpd.init $(1)/etc/init.d/rtp2httpd
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/rtp2httpd $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/../../src/rtp2httpd $(1)/usr/bin/
 endef
 
 $(eval $(call BuildPackage,rtp2httpd))
