@@ -25,11 +25,21 @@ jobs:
       - name: 检出代码库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖
+      - name: 安装编译依赖（跳过 MySQL 问题）
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          
+          # 首先修复可能的包管理器问题
+          sudo dpkg --configure -a || true
+          sudo apt update --fix-missing -y
+          
+          # 移除有问题的 MySQL 包
+          sudo apt remove --purge -y mysql-server mysql-server-8.0 mysql-common || true
+          sudo apt autoremove -y
+          sudo apt autoclean
+          
+          # 安装必要依赖（排除 MySQL 相关）
           sudo apt update -y
-          sudo apt full-upgrade -y
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
           bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext \
           genisoimage git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev \
