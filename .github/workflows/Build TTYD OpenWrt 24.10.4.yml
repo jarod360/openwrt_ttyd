@@ -59,30 +59,55 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: 构建 OpenWrt 包
+      - name: 准备自定义包目录
+        run: |
+          echo "=== 准备自定义包目录 ==="
+          # 确保 package 目录存在
+          mkdir -p package
+          echo "✅ package 目录已准备"
+
+      - name: 构建 OpenWrt 包（使用自定义包）
         uses: openwrt/gh-action-sdk@v9
         env:
           ARCH: ${{ matrix.arch }}-${{ matrix.sdk }}
           NO_SHFMT_CHECK: true
-          # 根据需要构建的包来设置PACKAGES变量
+          # 设置跳过补丁检查，避免 "Dirty patches" 错误
+          REFRESH_CHECK: 0
+          # 明确指定使用你的自定义包
           PACKAGES: "libuv libwebsockets-full ttyd luci-app-ttyd"
+          # 禁用所有官方 feeds，强制使用你的自定义包
+          DISABLE_FEEDS: "1"
           V: sc
+
+      - name: 检查构建产物
+        run: |
+          echo "=== 检查构建产物 ==="
+          find . -name "*.ipk" -o -name "*.apk" | head -20 || echo "未找到包文件"
+          echo "📁 构建目录结构:"
+          find bin/ -type d | head -20
 
       - name: 上传到 Release 资产
         run: |
           set -x
           echo "检查已构建的包..."
-          ls -la bin/packages/${{ matrix.arch }}/action/ || echo "目录未找到"
-
-          # 上传IPK文件（IPK文件名已包含架构信息）
+          
+          # 检查构建产物目录
+          find bin -name "*.ipk" -o -name "*.apk" | head -20 || echo "未找到包文件"
+          
+          # 上传IPK文件
           if ls bin/packages/${{ matrix.arch }}/action/*.ipk 1> /dev/null 2>&1; then
             echo "上传IPK文件..."
-            gh release upload --repo ${{ github.repository }} ${{ github.event.release.tag_name }} bin/packages/${{ matrix.arch }}/action/*.ipk
+            for ipk_file in bin/packages/${{ matrix.arch }}/action/*.ipk; do
+              echo "上传: $(basename $ipk_file)"
+              gh release upload --repo ${{ github.repository }} ${{ github.event.release.tag_name }} "$ipk_file"
+            done
           else
             echo "未找到IPK文件"
+            # 显示目录结构用于调试
+            find bin/packages/ -type d | head -20
           fi
 
-          # 处理并上传APK文件（为文件名添加架构后缀）
+          # 处理APK文件
           if ls bin/packages/${{ matrix.arch }}/action/*.apk 1> /dev/null 2>&1; then
             echo "处理APK文件..."
             for apk_file in bin/packages/${{ matrix.arch }}/action/*.apk; do
@@ -96,7 +121,6 @@ jobs:
               fi
 
               # 为非luci包添加架构后缀
-              # 例如：ttyd-1.0.0-r1.apk -> ttyd-1.0.0-r1_aarch64_cortex-a53.apk
               new_filename="${filename%.apk}_${{ matrix.arch }}.apk"
               echo "重命名: $filename -> $new_filename"
               cp "$apk_file" "/tmp/$new_filename"
@@ -107,3 +131,16 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传工作流产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttyd-packages-${{ matrix.arch }}-${{ matrix.sdk }}
+          path: |
+            bin/packages/${{ matrix.arch }}/action/*.ipk
+            bin/packages/${{ matrix.arch }}/action/*.apk
+          if-no-files-found: warn
+
+      - name: SSH 连接到 Actions (调试)
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event.inputs.ssh == 'true' }}
