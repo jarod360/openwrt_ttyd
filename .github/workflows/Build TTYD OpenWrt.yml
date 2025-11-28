@@ -19,7 +19,7 @@ on:
 env:
   TZ: Asia/Shanghai
   repo: ${{ github.repository }}
-  package_names: "libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman"
+  package_names: "libwebsockets-full ttyd luci-app-ttyd luci-app-diskman"
 
 jobs:
   job_auto_compile:
@@ -87,45 +87,36 @@ jobs:
         uses: mxschmitt/action-tmate@v3.13
         if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-      - name: 配置 ${{ matrix.platform }} feeds 并彻底删除 SDK 包
+      - name: 配置 ${{ matrix.platform }} feeds 并删除 SDK 中不需要的包
         run: |
           cd sdk
           
-          echo "=== 开始彻底删除 SDK 中的相关包 ==="
+          echo "=== 开始删除 SDK 中不需要的包 ==="
           
-          # 使用 find 命令搜索所有相关包的位置
+          # 使用 find 命令搜索相关包的位置
           echo "搜索相关包文件..."
-          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*libuv*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -30
+          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -30
           
-          # 彻底删除所有可能位置的包
+          # 只删除我们需要自定义的包，保留 SDK 的 libuv
           echo "开始删除包..."
           for dir in \
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
-            "package/feeds/packages/libuv" \
             "package/feeds/luci/luci-app-ttyd" \
             "package/feeds/luci/luci-app-diskman" \
-            "package/feeds/luci/luci-i18n-ttyd-zh-cn" \
-            "package/feeds/luci/luci-i18n-diskman-zh-cn" \
             "package/feeds/base/ttyd" \
             "package/feeds/base/libwebsockets" \
-            "package/feeds/base/libuv" \
             "package/feeds/base/luci-app-ttyd" \
             "package/feeds/base/luci-app-diskman" \
             "package/network/services/ttyd" \
             "package/network/services/libwebsockets" \
-            "package/network/services/libuv" \
             "feeds/packages/utils/ttyd" \
             "feeds/packages/libs/libwebsockets" \
-            "feeds/packages/libs/libuv" \
             "feeds/luci/applications/luci-app-ttyd" \
             "feeds/luci/applications/luci-app-diskman" \
             "feeds/luci/collections/luci" \
-            "feeds/luci/i18n/luci-i18n-ttyd-zh-cn" \
-            "feeds/luci/i18n/luci-i18n-diskman-zh-cn" \
             "feeds/base/ttyd" \
             "feeds/base/libwebsockets" \
-            "feeds/base/libuv" \
             "feeds/base/luci-app-ttyd" \
             "feeds/base/luci-app-diskman"; do
             if [ -d "$dir" ]; then
@@ -137,7 +128,7 @@ jobs:
           # 再次搜索确认删除结果
           echo "=== 确认删除结果 ==="
           echo "剩余相关目录:"
-          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*libuv*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" \) | head -20
+          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" \) | head -20
           
           # 更新 feeds 到 github 源
           sed -i \
@@ -161,20 +152,17 @@ jobs:
           for dir in \
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
-            "package/feeds/packages/libuv" \
             "package/feeds/luci/luci-app-ttyd" \
-            "package/feeds/luci/luci-app-diskman" \
-            "package/feeds/luci/luci-i18n-ttyd-zh-cn" \
-            "package/feeds/luci/luci-i18n-diskman-zh-cn"; do
+            "package/feeds/luci/luci-app-diskman" \; do
             if [ -d "$dir" ]; then
               echo "删除 feeds 目录: $dir"
               rm -rf "$dir"
             fi
           done
 
-          # 验证我们的包是否存在
+          # 验证我们的包是否存在（只验证我们提供的包）
           echo "=== 验证我们的包 ==="
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             if [ -d "feeds/custom_packages/package/$pkg" ]; then
               echo "✓ 找到我们的 $pkg 包"
             else
@@ -182,6 +170,15 @@ jobs:
               exit 1
             fi
           done
+
+          # 验证 SDK 的 libuv 是否存在
+          echo "=== 验证 SDK 的 libuv ==="
+          if find . -name "libuv" -type d | grep -q .; then
+            echo "✓ 找到 SDK 的 libuv 包"
+          else
+            echo "✗ 未找到 SDK 的 libuv 包"
+            exit 1
+          fi
 
           # 更新必要的组件
           rm -rf temp_resp
@@ -201,7 +198,7 @@ jobs:
           echo "CONFIG_ALL=n" >> .config
           echo "CONFIG_AUTOREMOVE=n" >> .config
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
-          echo "CONFIG_PACKAGE_libuv=m" >> .config
+          echo "CONFIG_PACKAGE_libuv=m" >> .config  # 使用 SDK 的 libuv
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
           echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
@@ -221,25 +218,38 @@ jobs:
           
           # 验证当前编译的是我们的包
           echo "=== 验证编译源 ==="
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             echo "$pkg 路径:"
             find . -path "*/$pkg/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 $pkg"
           done
           
           # 按依赖顺序编译所有包，包括语言包
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-i18n-ttyd-zh-cn luci-app-diskman luci-i18n-diskman-zh-cn; do
+          # 首先编译 libuv（来自 SDK）
+          echo "----------- 开始编译 libuv (来自 SDK) ---------------"
+          make package/feeds/packages/libuv/compile -j$(nproc) V=sc
+          echo "✓ libuv 编译完成"
+          echo ""
+          
+          # 然后编译我们自定义的包
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             if [ -d "feeds/custom_packages/package/$pkg" ]; then
                 echo "----------- 开始编译 $pkg ---------------"
                 make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
                 echo "✓ $pkg 编译完成"
                 echo ""
             else
-                echo "⚠ 注意: 在 custom_packages 中未找到 $pkg，尝试从 feeds 编译"
-                # 对于语言包，可能不在 custom_packages 中，尝试从 feeds 编译
-                make package/feeds/luci/$pkg/compile -j$(nproc) V=sc && echo "✓ $pkg 编译完成" || echo "⚠ $pkg 编译失败，继续..."
-                echo ""
+                echo "✗ 错误: 在 custom_packages 中未找到 $pkg"
+                exit 1
             fi
           done
+
+          # 最后编译语言包
+          echo "----------- 开始编译语言包 ---------------"
+          for lang_pkg in luci-i18n-ttyd-zh-cn luci-i18n-diskman-zh-cn; do
+            echo "编译 $lang_pkg..."
+            make package/feeds/luci/$lang_pkg/compile -j$(nproc) V=sc && echo "✓ $lang_pkg 编译完成" || echo "⚠ $lang_pkg 编译失败，继续..."
+          done
+          echo ""
 
           echo "=== 所有包编译完成 ==="
           echo "status=success" >> $GITHUB_OUTPUT
@@ -253,13 +263,13 @@ jobs:
           mkdir -p tmp_upload
           shopt -s nullglob 
           
-          # 查找并复制所有编译的包，包括语言包
+          # 查找并复制所有编译的包，包括语言包和 libuv
           for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
               [[ -d "$src_dir" ]] || continue
 
               echo "扫描目录: $src_dir"
 
-              # 查找所有相关包，包括语言包
+              # 查找所有相关包，包括语言包和 libuv
               for prefix in libuv libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n; do
                   for file in "$src_dir"/"$prefix"*; do
                       [[ -f "$file" ]] || continue
@@ -284,7 +294,7 @@ jobs:
               done
           else
               echo "错误: 没有找到文件进行打包"
-              find bin/packages -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*libuv*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
+              find bin/packages -name "*libuv*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
               exit 1
           fi
 
@@ -305,15 +315,16 @@ jobs:
           echo "**包名**|**版本**" >> release_${{ matrix.platform }}.txt
           echo "-|-" >> release_${{ matrix.platform }}.txt
 
-          # 从 Makefiles 提取版本信息
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          # 从 Makefiles 提取版本信息 - 我们自定义的包
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             if [ -f "feeds/custom_packages/package/$pkg/Makefile" ]; then
                 version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/$pkg/Makefile | tr -d ' ')
                 echo "**$pkg**|**$version**" >> release_${{ matrix.platform }}.txt
             fi
           done
 
-          # 添加语言包信息
+          # 添加 SDK 包信息
+          echo "**libuv**|**SDK 版本**" >> release_${{ matrix.platform }}.txt
           echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> release_${{ matrix.platform }}.txt
           echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> release_${{ matrix.platform }}.txt
 
@@ -359,7 +370,7 @@ jobs:
           echo "# 🎉 OpenWrt 多平台软件包编译完成" > release_body.md
           echo "" >> release_body.md
           echo "## 📦 包含的软件包" >> release_body.md
-          echo "- **libuv**: 跨平台异步 I/O 库" >> release_body.md
+          echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
           echo "- **libwebsockets-full**: 完整的 WebSocket 库" >> release_body.md
           echo "- **ttyd**: 通过 Web 共享终端" >> release_body.md
           echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面" >> release_body.md
