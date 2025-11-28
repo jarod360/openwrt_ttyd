@@ -1,114 +1,315 @@
-name: Build TTYD for OpenWrt
-
+#
+# Copyright (c) 2022-2025 SMALLPROGRAM <https://github.com/smallprogram>
+# Description: Auto compile ttyd with openwrt sdk
+#
+name: "Auto compile ttyd with openwrt sdk"
 on:
+  repository_dispatch:
   workflow_dispatch:
-  release:
-    types: [published]
-
-permissions:
-  contents: write
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+env:
+  TZ: Asia/Shanghai
+  repo: ${{ github.repository }}
+  package_names: "libwebsockets-full ttyd luci-app-ttyd"
 
 jobs:
-  build:
+  job_auto_compile:
     runs-on: ubuntu-latest
+    name: build ttyd (${{ matrix.ver }}-${{ matrix.platform }})
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - platform: "x86_64"
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz"
-          - platform: "aarch64_cortex-a53" 
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/armvirt/64/openwrt-sdk-22.03.5-armvirt-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz"
-          - platform: "aarch64_cortex-a72"
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa72/openwrt-sdk-22.03.5-mvebu-cortexa72_gcc-11.2.0_musl.Linux-x86_64.tar.xz"
-          - platform: "arm_cortex-a7"
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/sunxi/cortexa7/openwrt-sdk-22.03.5-sunxi-cortexa7_gcc-11.2.0_musl_eabi.Linux-x86_64.tar.xz"
-          - platform: "mips_24kc"
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/ath79/generic/openwrt-sdk-22.03.5-ath79-generic_gcc-11.2.0_musl.Linux-x86_64.tar.xz"
-          - platform: "mipsel_24kc"
-            sdk_url: "https://downloads.openwrt.org/releases/22.03.5/targets/ramips/mt76x8/openwrt-sdk-22.03.5-ramips-mt76x8_gcc-11.2.0_musl.Linux-x86_64.tar.xz"
+          - platform: x86_64
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
 
-    name: Build ${{ matrix.platform }}
+          - platform: aarch64_generic
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: aarch64_cortex-a53
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: aarch64_cortex-a72
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: arm_cortex-a7_neon-vfpv4
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/sunxi/cortexa7/openwrt-sdk-24.10.4-sunxi-cortexa7_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: mips_24kc
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: mipsel_24kc
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: "ipk"
+
+          - platform: x86_64
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: aarch64_generic
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/rockchip/armv8/openwrt-sdk-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: aarch64_cortex-a53
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa53/openwrt-sdk-mvebu-cortexa53_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: aarch64_cortex-a72
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa72/openwrt-sdk-mvebu-cortexa72_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: arm_cortex-a7_neon-vfpv4
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/sunxi/cortexa7/openwrt-sdk-sunxi-cortexa7_gcc-14.3.0_musl_eabi.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: mips_24kc
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/ath79/generic/openwrt-sdk-ath79-generic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
+          - platform: mipsel_24kc
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/ramips/rt288x/openwrt-sdk-ramips-rt288x_gcc-14.2.0_musl.Linux-x86_64.tar.zst
+            ver: "apk"
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
+      - name: Initialization ${{ matrix.platform }} compile environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev libssl-dev unzip gawk zlib1g-dev file python3
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          echo "Install packages"
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
 
-      - name: Download and extract SDK
+      - name: ${{ matrix.platform }} sdk download
         run: |
-          wget ${{ matrix.sdk_url }} -O sdk.tar.xz
+          wget ${{ matrix.url_sdk }}
+          file_name=$(echo ${{matrix.url_sdk}} | awk -F/ '{print $NF}')
           mkdir sdk
-          tar -xf sdk.tar.xz -C sdk --strip-components=1
+          if [[ $file_name == *.tar.xz ]]; then
+            tar -xJf $file_name -C ./sdk --strip-components=1
+          elif [[ $file_name == *.tar.zst ]]; then
+            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
+          else
+            echo "Unsupported file format: $file_name"
+            exit 1
+          fi
+          cd sdk
 
-      - name: Copy packages to SDK
+      - name: SSH connection to Actions
+        uses: mxschmitt/action-tmate@v3.13
+        if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+
+      - name: ${{ matrix.platform }} feeds configuration
         run: |
           cd sdk
-          cp -r ../package/* package/ || true
-          echo "Packages copied:"
-          ls -la package/
+          
+          # Update feeds to github source
+          sed -i \
+              -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
+              "feeds.conf.default"
 
-      - name: Configure build
-        run: |
-          cd sdk
+          # Add our repository to feeds
+          cat > feeds.tmp <<'EOF'
+          src-git custom_packages https://github.com/${{ env.repo }}.git;${{ github.ref_name }}
+          EOF
+          cat feeds.conf.default >> feeds.tmp
+          mv feeds.tmp feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          #--------------------------------------begin_patches------------------------------------------
+          echo "Start applying the patch"
+
+          # Remove existing packages from SDK to ensure we use our own
+          echo "Removing existing ttyd related packages from SDK..."
+          rm -rf package/feeds/packages/ttyd
+          rm -rf package/feeds/packages/libwebsockets
+          rm -rf package/feeds/luci/luci-app-ttyd
+          rm -rf package/feeds/luci/luci-app-ttyd
+          
+          # Update essential components
+          rm -rf temp_resp
+          git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
+          echo "update golang version"
+          rm -rf feeds/packages/lang/golang
+          cp -r temp_resp/lang/golang feeds/packages/lang
+          rm -rf temp_resp
+
+          git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
+          cp -f temp_resp/scripts/patch-kernel.sh scripts/
+          rm -rf temp_resp
+
+          echo "Patch application completed"
+          #--------------------------------------end_patches--------------------------------------------
+
+          # Configure for ttyd compilation
           echo "CONFIG_ALL_NONSHARED=n" > .config
-          echo "CONFIG_ALL_KMODS=n" >> .config  
+          echo "CONFIG_ALL_KMODS=n" >> .config
           echo "CONFIG_ALL=n" >> .config
           echo "CONFIG_AUTOREMOVE=n" >> .config
-          echo "CONFIG_PACKAGE_libuv=y" >> .config
-          echo "CONFIG_PACKAGE_libwebsockets-full=y" >> .config
-          echo "CONFIG_PACKAGE_ttyd=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+          echo "CONFIG_SIGNED_PACKAGES=n" >> .config
+          echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
+          echo "CONFIG_PACKAGE_ttyd=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
+          echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
+
           make defconfig
 
-      - name: Build libuv
+      - name: ${{ matrix.platform }} compile ttyd packages
+        id: compile
         run: |
           cd sdk
-          make package/libuv/compile -j$(nproc) V=0
+          echo "=== Starting compilation of ttyd packages ==="
+          
+          # Compile libwebsockets-full first (dependency)
+          if [ -d "feeds/custom_packages/package/libwebsockets-full" ]; then
+              echo "-----------begin compile libwebsockets-full ---------------"
+              make package/feeds/custom_packages/libwebsockets-full/compile -j$(nproc) V=sc
+              echo "-----------compiled libwebsockets-full ---------------"
+              echo ""
+          else
+              echo "ERROR: libwebsockets-full not found in custom_packages"
+              exit 1
+          fi
 
-      - name: Build libwebsockets
-        run: |
-          cd sdk
-          make package/libwebsockets-full/compile -j$(nproc) V=0
+          # Compile ttyd
+          if [ -d "feeds/custom_packages/package/ttyd" ]; then
+              echo "-----------begin compile ttyd ---------------"
+              make package/feeds/custom_packages/ttyd/compile -j$(nproc) V=sc
+              echo "-----------compiled ttyd ---------------"
+              echo ""
+          else
+              echo "ERROR: ttyd not found in custom_packages"
+              exit 1
+          fi
 
-      - name: Build ttyd
-        run: |
-          cd sdk
-          make package/ttyd/compile -j$(nproc) V=s
+          # Compile luci-app-ttyd
+          if [ -d "feeds/custom_packages/package/luci-app-ttyd" ]; then
+              echo "-----------begin compile luci-app-ttyd ---------------"
+              make package/feeds/custom_packages/luci-app-ttyd/compile -j$(nproc) V=sc
+              echo "-----------compiled luci-app-ttyd ---------------"
+              echo ""
+          else
+              echo "ERROR: luci-app-ttyd not found in custom_packages"
+              exit 1
+          fi
 
-      - name: Build luci app
-        run: |
-          cd sdk
-          make package/luci-app-ttyd/compile -j$(nproc) V=0
+          echo "=== All packages compiled successfully ==="
+          echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Collect packages
+      - name: Organize ${{ matrix.platform }} files
+        id: organize
+        if: steps.compile.outputs.status == 'success'
         run: |
           cd sdk
-          mkdir -p ../artifacts/${{ matrix.platform }}
-          find bin -name "*.ipk" -exec cp {} ../artifacts/${{ matrix.platform }}/ \;
-          echo "Built packages for ${{ matrix.platform }}:"
-          ls -la ../artifacts/${{ matrix.platform }}/
+
+          mkdir -p tmp_upload
+          shopt -s nullglob 
+          
+          # Find and copy all compiled packages
+          for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
+              [[ -d "$src_dir" ]] || continue
+
+              echo "Scanning: $src_dir"
+
+              for prefix in libwebsockets ttyd luci-app-ttyd; do
+                  for file in "$src_dir"/"$prefix"*; do
+                      [[ -f "$file" ]] || continue
+
+                      filename=$(basename "$file")
+                      echo "  Found: $filename"
+                      cp -r "$file" "tmp_upload/"
+                  done
+              done
+          done
+
+          # Create upload directory and package files
+          mkdir -p upload
+          if [ "$(ls -A tmp_upload/)" ]; then
+              zip -jr upload/ttyd_packages_${{ matrix.ver }}_${{ matrix.platform }}.zip tmp_upload/*
+              echo "Files packaged successfully"
+          else
+              echo "ERROR: No files found to package"
+              exit 1
+          fi
+
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Generate release info
+        id: info
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd sdk
+          echo "## :mega: ttyd Packages Compilation Report" >> release.txt
+          echo "### Build Information" >> release.txt
+          echo "**Platform**: ${{ matrix.platform }}" >> release.txt
+          echo "**Version Type**: ${{ matrix.ver }}" >> release.txt
+          echo "**Build Date**: $(date)" >> release.txt
+
+          echo "### Compiled Packages" >> release.txt
+          echo "**Package Name**|**Version**" >> release.txt
+          echo "-|-" >> release.txt
+
+          # Extract version information from Makefiles
+          if [ -f "feeds/custom_packages/package/libwebsockets-full/Makefile" ]; then
+              version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/libwebsockets-full/Makefile | tr -d ' ')
+              echo "**libwebsockets-full**|**$version**" >> release.txt
+          fi
+
+          if [ -f "feeds/custom_packages/package/ttyd/Makefile" ]; then
+              version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/ttyd/Makefile | tr -d ' ')
+              echo "**ttyd**|**$version**" >> release.txt
+          fi
+
+          if [ -f "feeds/custom_packages/package/luci-app-ttyd/Makefile" ]; then
+              version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/luci-app-ttyd/Makefile | tr -d ' ')
+              echo "**luci-app-ttyd**|**$version**" >> release.txt
+          fi
+
+          echo "### File List" >> release.txt
+          echo "```" >> release.txt
+          ls -la tmp_upload/ >> release.txt
+          echo "```" >> release.txt
+
+          echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: steps.info.outputs.status == 'success'
         with:
-          name: ttyd-${{ matrix.platform }}
-          path: artifacts/${{ matrix.platform }}/*.ipk
+          name: ttyd_${{ matrix.ver }}_${{ matrix.platform }}
+          path: ${{ env.FIRMWARE }}/upload/*
+          retention-days: 30
 
-  create-release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'release'
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-      - name: Create release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/**/*.ipk
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: steps.info.outputs.status == 'success' && github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ttyd-${{ matrix.ver }}-${{ matrix.platform }}-$(date +%Y%m%d-%H%M)
+          body_path: ${{ env.FIRMWARE }}/release.txt
+          files: ${{ env.FIRMWARE }}/upload/*
+          draft: false
+          prerelease: false
