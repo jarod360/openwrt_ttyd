@@ -1,0 +1,448 @@
+#
+# Copyright (c) 2022-2025 SMALLPROGRAM <https://github.com/smallprogram>
+# Description: Auto compile ttyd with openwrt sdk
+#
+name: "Auto compile ttyd with openwrt sdk"
+
+# 修复权限问题
+permissions:
+  contents: write
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH连接 Actions'
+        required: false
+        default: 'false'
+env:
+  TZ: Asia/Shanghai
+  repo: ${{ github.repository }}
+  package_names: "libwebsockets-full ttyd luci-app-ttyd luci-app-diskman"
+
+jobs:
+  job_auto_compile:
+    runs-on: ubuntu-latest
+    name: build packages (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 只保留稳定版 (ipk) 平台
+          - platform: x86_64
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: aarch64_generic
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: aarch64_cortex-a53
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: aarch64_cortex-a72
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: arm_cortex-a7_neon-vfpv4
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/sunxi/cortexa7/openwrt-sdk-24.10.4-sunxi-cortexa7_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst
+
+          - platform: mips_24kc
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: mipsel_24kc
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+    steps:
+      - name: 初始化 ${{ matrix.platform }} 编译环境
+        run: |
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          echo "安装编译依赖包"
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+
+      - name: 下载 ${{ matrix.platform }} SDK
+        run: |
+          wget ${{ matrix.url_sdk }}
+          file_name=$(echo ${{matrix.url_sdk}} | awk -F/ '{print $NF}')
+          mkdir sdk
+          if [[ $file_name == *.tar.xz ]]; then
+            tar -xJf $file_name -C ./sdk --strip-components=1
+          elif [[ $file_name == *.tar.zst ]]; then
+            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
+          else
+            echo "不支持的文件格式: $file_name"
+            exit 1
+          fi
+          cd sdk
+
+      - name: SSH 连接到 Actions
+        uses: mxschmitt/action-tmate@v3.13
+        if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+
+      - name: 配置 ${{ matrix.platform }} feeds 并删除 SDK 中不需要的包
+        run: |
+          cd sdk
+          
+          echo "=== 开始删除 SDK 中不需要的包 ==="
+          
+          # 使用 find 命令搜索相关包的位置
+          echo "搜索相关包文件..."
+          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -30
+          
+          # 只删除我们需要自定义的包，保留 SDK 的 libuv
+          echo "开始删除包..."
+          for dir in \
+            "package/feeds/packages/ttyd" \
+            "package/feeds/packages/libwebsockets" \
+            "package/feeds/luci/luci-app-ttyd" \
+            "package/feeds/luci/luci-app-diskman" \
+            "package/feeds/base/ttyd" \
+            "package/feeds/base/libwebsockets" \
+            "package/feeds/base/luci-app-ttyd" \
+            "package/feeds/base/luci-app-diskman" \
+            "package/network/services/ttyd" \
+            "package/network/services/libwebsockets" \
+            "feeds/packages/utils/ttyd" \
+            "feeds/packages/libs/libwebsockets" \
+            "feeds/luci/applications/luci-app-ttyd" \
+            "feeds/luci/applications/luci-app-diskman" \
+            "feeds/luci/collections/luci" \
+            "feeds/base/ttyd" \
+            "feeds/base/libwebsockets" \
+            "feeds/base/luci-app-ttyd" \
+            "feeds/base/luci-app-diskman"; do
+            if [ -d "$dir" ]; then
+              echo "删除目录: $dir"
+              rm -rf "$dir"
+            fi
+          done
+          
+          # 再次搜索确认删除结果
+          echo "=== 确认删除结果 ==="
+          echo "剩余相关目录:"
+          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" \) | head -20
+          
+          # 更新 feeds 到 github 源
+          sed -i \
+              -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
+              "feeds.conf.default"
+
+          # 添加我们的仓库到 feeds
+          cat > feeds.tmp <<'EOF'
+          src-git custom_packages https://github.com/${{ env.repo }}.git;${{ github.ref_name }}
+          EOF
+          cat feeds.conf.default >> feeds.tmp
+          mv feeds.tmp feeds.conf.default
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          # 再次检查并删除可能通过 feeds 重新安装的包
+          echo "=== 再次检查并删除 feeds 安装的包 ==="
+          for dir in \
+            "package/feeds/packages/ttyd" \
+            "package/feeds/packages/libwebsockets" \
+            "package/feeds/luci/luci-app-ttyd" \
+            "package/feeds/luci/luci-app-diskman"; do
+            if [ -d "$dir" ]; then
+              echo "删除 feeds 目录: $dir"
+              rm -rf "$dir"
+            fi
+          done
+
+          # 验证我们的包是否存在（只验证我们提供的包）
+          echo "=== 验证我们的包 ==="
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+            if [ -d "feeds/custom_packages/package/$pkg" ]; then
+              echo "✓ 找到我们的 $pkg 包"
+            else
+              echo "✗ 未找到我们的 $pkg 包"
+              exit 1
+            fi
+          done
+
+          # 验证 SDK 的 libuv 是否存在
+          echo "=== 验证 SDK 的 libuv ==="
+          if find . -name "libuv" -type d | grep -q .; then
+            echo "✓ 找到 SDK 的 libuv 包"
+          else
+            echo "✗ 未找到 SDK 的 libuv 包"
+            exit 1
+          fi
+
+          # 更新必要的组件
+          rm -rf temp_resp
+          git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
+          echo "更新 golang 版本"
+          rm -rf feeds/packages/lang/golang
+          cp -r temp_resp/lang/golang feeds/packages/lang
+          rm -rf temp_resp
+
+          git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
+          cp -f temp_resp/scripts/patch-kernel.sh scripts/
+          rm -rf temp_resp
+
+          # 配置编译选项 - 添加语言包支持
+          echo "CONFIG_ALL_NONSHARED=n" > .config
+          echo "CONFIG_ALL_KMODS=n" >> .config
+          echo "CONFIG_ALL=n" >> .config
+          echo "CONFIG_AUTOREMOVE=n" >> .config
+          echo "CONFIG_SIGNED_PACKAGES=n" >> .config
+          echo "CONFIG_PACKAGE_libuv=m" >> .config  # 使用 SDK 的 libuv
+          echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
+          echo "CONFIG_PACKAGE_ttyd=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-diskman=m" >> .config
+          # 添加中文语言包支持
+          echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=m" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-diskman-zh-cn=m" >> .config
+          echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
+
+          make defconfig
+
+      - name: ${{ matrix.platform }} 编译所有包
+        id: compile
+        run: |
+          cd sdk
+          echo "=== 开始编译所有包 ==="
+          
+          # 验证当前编译的是我们的包
+          echo "=== 验证编译源 ==="
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+            echo "$pkg 路径:"
+            find . -path "*/$pkg/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 $pkg"
+          done
+          
+          # 按依赖顺序编译所有包，包括语言包
+          # 首先编译 libuv（来自 SDK）
+          echo "----------- 开始编译 libuv (来自 SDK) ---------------"
+          make package/feeds/packages/libuv/compile -j$(nproc) V=sc
+          echo "✓ libuv 编译完成"
+          echo ""
+          
+          # 然后编译我们自定义的包
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+            if [ -d "feeds/custom_packages/package/$pkg" ]; then
+                echo "----------- 开始编译 $pkg ---------------"
+                make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
+                echo "✓ $pkg 编译完成"
+                echo ""
+            else
+                echo "✗ 错误: 在 custom_packages 中未找到 $pkg"
+                exit 1
+            fi
+          done
+
+          # 最后编译语言包
+          echo "----------- 开始编译语言包 ---------------"
+          for lang_pkg in luci-i18n-ttyd-zh-cn luci-i18n-diskman-zh-cn; do
+            echo "编译 $lang_pkg..."
+            make package/feeds/luci/$lang_pkg/compile -j$(nproc) V=sc && echo "✓ $lang_pkg 编译完成" || echo "⚠ $lang_pkg 编译失败，继续..."
+          done
+          echo ""
+
+          echo "=== 所有包编译完成 ==="
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 整理 ${{ matrix.platform }} 文件
+        id: organize
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd sdk
+
+          mkdir -p tmp_upload
+          shopt -s nullglob 
+          
+          # 查找并复制所有编译的包，包括语言包和 libuv
+          for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
+              [[ -d "$src_dir" ]] || continue
+
+              echo "扫描目录: $src_dir"
+
+              # 查找所有相关包，包括语言包和 libuv
+              for prefix in libuv libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n; do
+                  for file in "$src_dir"/"$prefix"*; do
+                      [[ -f "$file" ]] || continue
+
+                      filename=$(basename "$file")
+                      # 排除不需要的 luci-i18n-base-zh-cn 包
+                      if [[ "$filename" == *"luci-i18n-base-zh-cn"* ]]; then
+                          echo "  跳过文件: $filename (不需要的包)"
+                          continue
+                      fi
+                      echo "  找到文件: $filename"
+                      cp -r "$file" "tmp_upload/"
+                  done
+              done
+          done
+
+          # 创建上传目录并打包文件
+          mkdir -p upload
+          if [ "$(ls -A tmp_upload/)" ]; then
+              zip -jr upload/packages_${{ matrix.platform }}.zip tmp_upload/*
+              echo "文件打包成功"
+              echo "打包的文件列表:"
+              ls -la tmp_upload/
+              echo "=== 文件详情 ==="
+              for file in tmp_upload/*; do
+                echo "  - $(basename "$file") ($(du -h "$file" | cut -f1))"
+              done
+          else
+              echo "错误: 没有找到文件进行打包"
+              find bin/packages -name "*libuv*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
+              exit 1
+          fi
+
+          echo "FIRMWARE=$PWD/upload" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 生成版本信息
+        id: info
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd sdk
+          # 将版本信息文件直接放在 upload 目录中
+          echo "## 🚀 OpenWrt 软件包编译报告" > upload/release_${{ matrix.platform }}.txt
+          echo "### 编译信息" >> upload/release_${{ matrix.platform }}.txt
+          echo "**平台**: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.txt
+          echo "**编译日期**: $(date)" >> upload/release_${{ matrix.platform }}.txt
+
+          echo "### 编译的软件包" >> upload/release_${{ matrix.platform }}.txt
+          echo "**包名**|**版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "-|-" >> upload/release_${{ matrix.platform }}.txt
+
+          # 从 Makefiles 提取版本信息 - 我们自定义的包
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+            if [ -f "feeds/custom_packages/package/$pkg/Makefile" ]; then
+                version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/$pkg/Makefile | tr -d ' ')
+                echo "**$pkg**|**$version**" >> upload/release_${{ matrix.platform }}.txt
+            fi
+          done
+
+          # 添加 SDK 包信息
+          echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+
+          echo "### 文件列表" >> upload/release_${{ matrix.platform }}.txt
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.txt
+          ls -la tmp_upload/ >> upload/release_${{ matrix.platform }}.txt
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.txt
+
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 上传制品到 Artifact
+        uses: actions/upload-artifact@v4
+        if: steps.info.outputs.status == 'success'
+        with:
+          name: packages_${{ matrix.platform }}
+          path: |
+            ${{ env.FIRMWARE }}/packages_${{ matrix.platform }}.zip
+            ${{ env.FIRMWARE }}/release_${{ matrix.platform }}.txt
+          retention-days: 30
+
+  create_release:
+    runs-on: ubuntu-latest
+    name: 创建统一 Release
+    needs: job_auto_compile
+    if: always() && needs.job_auto_compile.result == 'success'
+    
+    steps:
+      - name: 下载所有平台的制品
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: 生成随机标签名和发布日期
+        id: date_info
+        run: |
+          # 生成4位随机数
+          RANDOM_SUFFIX=$(shuf -i 1000-9999 -n 1)
+          CURRENT_DATE=$(date +%Y-%m-%d)
+          echo "随机后缀: $RANDOM_SUFFIX"
+          echo "当前日期: $CURRENT_DATE"
+          echo "tag_name=openwrt-packages-$(date +%Y%m%d)-${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_date=$CURRENT_DATE" >> $GITHUB_OUTPUT
+          
+      - name: 创建统一的 Release 信息
+        run: |
+          echo "# 🎉 OpenWrt 多平台软件包编译完成" > release_body.md
+          echo "" >> release_body.md
+          echo "## 📦 包含的软件包" >> release_body.md
+          echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
+          echo "- **libwebsockets-full**: 完整的 WebSocket 库" >> release_body.md
+          echo "- **ttyd**: 通过 Web 共享终端" >> release_body.md
+          echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面" >> release_body.md
+          echo "- **luci-app-diskman**: 磁盘管理 LuCI 应用" >> release_body.md
+          echo "- **luci-i18n-ttyd-zh-cn**: ttyd 中文语言包" >> release_body.md
+          echo "- **luci-i18n-diskman-zh-cn**: diskman 中文语言包" >> release_body.md
+          echo "" >> release_body.md
+          echo "## 🖥️ 支持的平台" >> release_body.md
+          
+          # 收集所有平台的信息
+          for platform_dir in artifacts/*/; do
+            platform=$(basename $platform_dir | sed 's/packages_//')
+            if [ -f "$platform_dir/release_$platform.txt" ]; then
+              echo "### $platform" >> release_body.md
+              # 提取编译的软件包信息
+              echo "\`\`\`" >> release_body.md
+              cat "$platform_dir/release_$platform.txt" | sed -n '/### 编译的软件包/,/### 文件列表/p' | head -n -1 >> release_body.md
+              echo "\`\`\`" >> release_body.md
+              echo "" >> release_body.md
+            fi
+          done
+          
+          echo "## 📋 文件列表" >> release_body.md
+          echo "每个平台一个压缩包，包含该平台的所有 ipk 文件。" >> release_body.md
+          
+          # 列出所有文件
+          echo "\`\`\`" >> release_body.md
+          find artifacts -name "*.zip" -exec basename {} \; | sort >> release_body.md
+          echo "\`\`\`" >> release_body.md
+          
+          echo "" >> release_body.md
+          echo "## 🚀 使用方法" >> release_body.md
+          echo "1. 下载对应平台的压缩包" >> release_body.md
+          echo "2. 解压后通过 opkg 安装所需的 ipk 文件" >> release_body.md
+          echo "3. 注意依赖关系，建议按以下顺序安装：" >> release_body.md
+          echo "   - libuv" >> release_body.md
+          echo "   - libwebsockets-full" >> release_body.md
+          echo "   - ttyd" >> release_body.md
+          echo "   - luci-app-ttyd" >> release_body.md
+          echo "   - luci-i18n-ttyd-zh-cn" >> release_body.md
+          echo "   - luci-app-diskman" >> release_body.md
+          echo "   - luci-i18n-diskman-zh-cn" >> release_body.md
+
+      - name: 准备 Release 文件
+        run: |
+          # 创建临时目录存放所有要发布的文件
+          mkdir -p release_files
+          
+          # 复制所有 zip 文件
+          find artifacts -name "*.zip" -exec cp {} release_files/ \;
+          
+          # 显示文件列表
+          echo "=== 准备发布的文件 ==="
+          ls -la release_files/
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.date_info.outputs.tag_name }}
+          name: "OpenWrt Packages - ${{ steps.date_info.outputs.release_date }}"
+          body_path: release_body.md
+          files: release_files/*.zip
+          draft: false
+          prerelease: false
