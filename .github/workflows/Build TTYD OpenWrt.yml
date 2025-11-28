@@ -1,81 +1,56 @@
-#
-# Copyright (c) 2022-2025 SMALLPROGRAM
-# Description: Auto compile ttyd with OpenWrt SDK, OpenSSL 1.1.1 only
-#
-name: "Auto compile ttyd with OpenWrt SDK"
-
-permissions:
-  contents: write
+name: Build OpenWrt Packages
 
 on:
-  repository_dispatch:
   workflow_dispatch:
-    inputs:
-      ssh:
-        description: 'SSH连接 Actions'
-        required: false
-        default: 'false'
 
 env:
   TZ: Asia/Shanghai
-  repo: ${{ github.repository }}
-  package_names: "openssl libwebsockets-full ttyd luci-app-ttyd luci-app-diskman"
 
 jobs:
-  job_auto_compile:
-    runs-on: ubuntu-latest
-    name: build packages (${{ matrix.platform }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: x86_64
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: aarch64_generic
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: aarch64_cortex-a53
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: aarch64_cortex-a72
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: arm_cortex-a7_neon-vfpv4
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/sunxi/cortexa7/openwrt-sdk-24.10.4-sunxi-cortexa7_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst
-          - platform: mips_24kc
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: mipsel_24kc
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: 初始化环境
-        run: |
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install -y build-essential ccache git wget curl python3 python3-pip \
-            libncurses-dev libssl-dev zlib1g-dev libelf-dev asciidoc binutils bison flex \
-            gawk gettext libtool liblzma-dev patch unzip xz-utils file
-          sudo -E apt-get -qq clean
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: 下载 SDK
+      - name: Install dependencies
         run: |
-          wget ${{ matrix.url_sdk }}
-          file_name=$(basename ${{ matrix.url_sdk }})
-          mkdir sdk && cd sdk
-          if [[ $file_name == *.tar.xz ]]; then
-            tar -xJf ../$file_name --strip-components=1
-          elif [[ $file_name == *.tar.zst ]]; then
-            tar --zstd -x -f ../$file_name --strip-components=1
-          else
-            echo "不支持的文件格式: $file_name"; exit 1
-          fi
+          sudo apt update
+          sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev
 
-      - name: 删除 SDK 自带包并添加自定义 feeds
+      - name: 创建并进入 SDK 目录
+        run: |
+          mkdir -p sdk
+          cd sdk
+
+      - name: 下载 OpenWrt SDK
         run: |
           cd sdk
-          rm -rf package/feeds/packages/ttyd package/feeds/packages/libwebsockets package/feeds/luci/luci-app-ttyd package/feeds/luci/luci-app-diskman
-          echo "src-git custom_packages https://github.com/${{ env.repo }}.git;${{ github.ref_name }}" > feeds.conf.default
+          wget https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+          tar xf openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+          mv openwrt-sdk-* sdkroot
+
+      - name: 准备 SDK 构建环境
+        run: |
+          cd sdk/sdkroot
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 配置 .config
+          # 删除 SDK 自带的包，确保只使用你的 package 目录
+          rm -rf package/feeds/packages/ttyd
+          rm -rf package/feeds/packages/libwebsockets
+          rm -rf package/feeds/packages/libwebsockets-full
+          rm -rf package/feeds/luci/luci-app-ttyd
+          rm -rf package/libs/libwebsockets
+
+          # 复制你仓库中的 package
+          cp -rf $GITHUB_WORKSPACE/package/* package/
+
+      - name: 配置 .config（指定 OpenSSL 1.1.1）
         run: |
+          cd sdk/sdkroot
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_PACKAGE_openssl=m" >> .config
           echo "CONFIG_PACKAGE_openssl3=n" >> .config
@@ -87,84 +62,51 @@ jobs:
           echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=m" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-diskman-zh-cn=m" >> .config
           echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
+
           make defconfig
 
-      - name: 编译 SDK OpenSSL 1.1.1
+      - name: 编译 OpenSSL（1.1.1）
         run: |
-          make package/libs/openssl/compile -j$(nproc) V=sc
+          cd sdk/sdkroot
+          make package/libs/openssl/compile V=sc -j$(nproc)
 
-      - name: 强制 libwebsockets-full 链接 OpenSSL 1.1.1
+      - name: 编译全部目标包（ttyd / websockets / luci）
         run: |
-          sed -i 's/DEPENDS:=openssl.*/DEPENDS:=+openssl/' package/feeds/custom_packages/libwebsockets-full/Makefile
+          cd sdk/sdkroot
+          make package/libuv/compile V=sc -j$(nproc)
+          make package/libwebsockets-full/compile V=sc -j$(nproc)
+          make package/ttyd/compile V=sc -j$(nproc)
+          make package/luci-app-ttyd/compile V=sc -j$(nproc)
+          make package/luci-app-diskman/compile V=sc -j$(nproc)
 
-      - name: 编译自定义包
+      - name: 收集编译产物
         run: |
-          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
-            make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
-          done
-          for lang_pkg in luci-i18n-ttyd-zh-cn luci-i18n-diskman-zh-cn; do
-            make package/feeds/luci/$lang_pkg/compile -j$(nproc) V=sc || echo "⚠ $lang_pkg 编译失败，继续..."
-          done
+          mkdir -p output
+          cd sdk/sdkroot
 
-      - name: 打包输出
-        run: |
-          mkdir -p tmp_upload upload
-          cp bin/packages/*/*/{openssl*,libuv*,libwebsockets*,ttyd*,luci-app*,luci-i18n*} tmp_upload/ || true
-          zip -jr upload/packages_${{ matrix.platform }}.zip tmp_upload/*
-          echo "FIRMWARE=$PWD/upload" >> $GITHUB_ENV
+          echo "收集 openssl..."
+          cp bin/packages/*/*/openssl*.ipk $GITHUB_WORKSPACE/output/ 2>/dev/null || true
 
-      - name: 生成 Release 信息
-        run: |
-          echo "## OpenWrt ${{ matrix.platform }} Packages" > upload/release_${{ matrix.platform }}.md
-          echo "- 平台: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.md
-          echo "- 编译日期: $(date)" >> upload/release_${{ matrix.platform }}.md
-          echo "- 包含: openssl 1.1.1, libuv, libwebsockets-full, ttyd, luci-app-ttyd, luci-app-diskman, luci-i18n-zh-cn" >> upload/release_${{ matrix.platform }}.md
-          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.md
-          ls -la tmp_upload/ >> upload/release_${{ matrix.platform }}.md
-          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.md
+          echo "收集 libwebsockets-full..."
+          cp bin/packages/*/*/libwebsockets*.ipk $GITHUB_WORKSPACE/output/ 2>/dev/null || true
 
-      - name: 上传 Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages_${{ matrix.platform }}
-          path: |
-            ${{ env.FIRMWARE }}/packages_${{ matrix.platform }}.zip
-            ${{ env.FIRMWARE }}/release_${{ matrix.platform }}.md
-          retention-days: 30
+          echo "收集 ttyd..."
+          cp bin/packages/*/*/ttyd*.ipk $GITHUB_WORKSPACE/output/ 2>/dev/null || true
 
-  create_release:
-    runs-on: ubuntu-latest
-    name: 创建统一 Release
-    needs: job_auto_compile
-    steps:
-      - name: 下载所有 Artifact
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+          echo "收集 luci-app-ttyd..."
+          cp bin/packages/*/*/luci-app-ttyd*.ipk $GITHUB_WORKSPACE/output/ 2>/dev/null || true
 
-      - name: 生成 Release tag
-        id: date_info
-        run: |
-          RANDOM_SUFFIX=$(shuf -i 1000-9999 -n 1)
-          CURRENT_DATE=$(date +%Y-%m-%d)
-          echo "tag_name=openwrt-packages-$(date +%Y%m%d)-${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_date=$CURRENT_DATE" >> $GITHUB_OUTPUT
+          echo "收集 luci-app-diskman..."
+          cp bin/packages/*/*/luci-app-diskman*.ipk $GITHUB_WORKSPACE/output/ 2>/dev/null || true
 
-      - name: 汇总 Release 内容
-        run: |
-          echo "# OpenWrt Packages Release" > release_body.md
-          for f in artifacts/*/release_*.md; do
-            cat "$f" >> release_body.md
-          done
+          echo "最终产物："
+          ls -lh $GITHUB_WORKSPACE/output
 
-      - name: 创建 GitHub Release
+      - name: 上传 Release（自动创建）
         uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "release-${{ github.run_number }}"
+          name: "OpenWrt TTYD Build ${{ github.run_number }}"
+          files: output/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.date_info.outputs.tag_name }}
-          name: "OpenWrt Packages - ${{ steps.date_info.outputs.release_date }}"
-          body_path: release_body.md
-          files: artifacts/**/*.zip
-          draft: false
-          prerelease: false
