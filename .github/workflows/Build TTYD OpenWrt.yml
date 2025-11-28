@@ -66,17 +66,14 @@ jobs:
             echo "不支持的文件格式: $file_name"; exit 1
           fi
 
-      - name: 删除 SDK 自带包并添加自定义 feeds
+      - name: 更新 feeds 并安装
         run: |
           cd sdk
-          rm -rf package/feeds/packages/ttyd package/feeds/packages/libwebsockets package/feeds/luci/luci-app-ttyd package/feeds/luci/luci-app-diskman
-          echo "src-git custom_packages https://github.com/${{ env.repo }}.git;${{ github.ref_name }}" > feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: 配置 .config
         run: |
-          cd sdk
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_PACKAGE_openssl=m" >> .config
           echo "CONFIG_PACKAGE_openssl3=n" >> .config
@@ -90,19 +87,16 @@ jobs:
           echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
           make defconfig
 
-      - name: 编译 SDK OpenSSL 1.1.1
+      - name: 编译 SDK 自带 OpenSSL 1.1.1
         run: |
-          cd sdk
-          make package/libs/openssl/compile -j$(nproc) V=sc
+          make package/feeds/packages/openssl/compile -j$(nproc) V=sc
 
-      - name: 强制 libwebsockets-full 链接 OpenSSL 1.1.1
+      - name: 强制 libwebsockets-full 链接 SDK 自带 OpenSSL 1.1.1
         run: |
-          cd sdk
           sed -i 's/DEPENDS:=openssl.*/DEPENDS:=+openssl/' package/feeds/custom_packages/libwebsockets-full/Makefile
 
       - name: 编译自定义包
         run: |
-          cd sdk
           for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
           done
@@ -112,7 +106,6 @@ jobs:
 
       - name: 打包输出
         run: |
-          cd sdk
           mkdir -p tmp_upload upload
           cp bin/packages/*/*/{openssl*,libuv*,libwebsockets*,ttyd*,luci-app*,luci-i18n*} tmp_upload/ || true
           zip -jr upload/packages_${{ matrix.platform }}.zip tmp_upload/*
@@ -120,7 +113,6 @@ jobs:
 
       - name: 生成 Release 信息
         run: |
-          cd sdk
           echo "## OpenWrt ${{ matrix.platform }} Packages" > upload/release_${{ matrix.platform }}.md
           echo "- 平台: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.md
           echo "- 编译日期: $(date)" >> upload/release_${{ matrix.platform }}.md
