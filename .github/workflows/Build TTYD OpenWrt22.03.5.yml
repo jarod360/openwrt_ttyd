@@ -338,7 +338,7 @@ jobs:
         run: |
           cd sdk
           # 将版本信息文件直接放在 upload 目录中
-          echo "## 🚀 OpenWrt 软件包编译报告" > upload/release_${{ matrix.platform }}.txt
+          echo "## 🚀 OpenWr软件包编译报告" > upload/release_${{ matrix.platform }}.txt
           echo "### 编译信息" >> upload/release_${{ matrix.platform }}.txt
           echo "**平台**: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.txt
           echo "**编译日期**: $(date)" >> upload/release_${{ matrix.platform }}.txt
@@ -402,7 +402,7 @@ jobs:
           
       - name: 创建统一的 Release 信息
         run: |
-          echo "# 🎉 OpenWrt 多平台软件包编译完成" > release_body.md
+          echo "# 🎉 OpenWrt 22.03.5平台 openssl 1.1.x版本多平台软件包编译完成" > release_body.md
           echo "" >> release_body.md
           echo "## 📦 包含的软件包" >> release_body.md
           echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
