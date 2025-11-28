@@ -97,7 +97,7 @@ jobs:
           echo "搜索相关包文件..."
           find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -30
           
-          # 只删除我们需要自定义的包，保留 SDK 的 libuv 和 openssl
+          # 只删除我们需要自定义的包，保留 SDK 的 libuv
           echo "开始删除包..."
           for dir in \
             "package/feeds/packages/ttyd" \
@@ -171,16 +171,26 @@ jobs:
             fi
           done
 
-          # 验证 SDK 的 libuv 和 openssl 是否存在
-          echo "=== 验证 SDK 的基础库 ==="
-          for sdk_pkg in libuv openssl; do
-            if find . -name "$sdk_pkg" -type d | grep -q .; then
-              echo "✓ 找到 SDK 的 $sdk_pkg 包"
-            else
-              echo "✗ 未找到 SDK 的 $sdk_pkg 包"
-              exit 1
-            fi
-          done
+          # 验证 SDK 的 libuv 是否存在
+          echo "=== 验证 SDK 的 libuv ==="
+          if find . -name "libuv" -type d | grep -q .; then
+            echo "✓ 找到 SDK 的 libuv 包"
+          else
+            echo "✗ 未找到 SDK 的 libuv 包"
+            exit 1
+          fi
+
+          # 查找 OpenSSL 包的实际位置
+          echo "=== 查找 OpenSSL 包位置 ==="
+          OPENSSL_PATH=$(find . -type d -name "openssl" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$OPENSSL_PATH" ]; then
+            echo "✓ 找到 OpenSSL 包位置: $OPENSSL_PATH"
+          else
+            echo "✗ 未找到 OpenSSL 包"
+            # 列出所有可能的包目录
+            find . -type d -name "*ssl*" | head -10
+            exit 1
+          fi
 
           # 更新必要的组件
           rm -rf temp_resp
@@ -194,17 +204,14 @@ jobs:
           cp -f temp_resp/scripts/patch-kernel.sh scripts/
           rm -rf temp_resp
 
-          # 配置编译选项 - 添加 OpenSSL 和语言包支持
+          # 配置编译选项 - 添加语言包支持
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_ALL_KMODS=n" >> .config
           echo "CONFIG_ALL=n" >> .config
           echo "CONFIG_AUTOREMOVE=n" >> .config
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
           echo "CONFIG_PACKAGE_libuv=m" >> .config  # 使用 SDK 的 libuv
-          echo "CONFIG_PACKAGE_openssl-util=m" >> .config  # 启用 OpenSSL 工具
-          echo "CONFIG_PACKAGE_libopenssl=m" >> .config    # 启用 OpenSSL 库
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
-          echo "CONFIG_PACKAGE_libwebsockets-openssl=m" >> .config # 确保 libwebsockets 使用 openssl
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
           echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
           echo "CONFIG_PACKAGE_luci-app-diskman=m" >> .config
@@ -235,10 +242,18 @@ jobs:
           echo "✓ libuv 编译完成"
           echo ""
           
-          # 然后编译 openssl（来自 SDK）
-          echo "----------- 开始编译 openssl (来自 SDK) ---------------"
-          make package/feeds/packages/openssl/compile -j$(nproc) V=sc
-          echo "✓ openssl 编译完成"
+          # 查找并编译 OpenSSL（来自 SDK）
+          echo "----------- 查找并编译 OpenSSL (来自 SDK) ---------------"
+          OPENSSL_PATH=$(find . -type d -name "openssl" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$OPENSSL_PATH" ]; then
+            echo "找到 OpenSSL 路径: $OPENSSL_PATH"
+            # 提取相对路径（去掉开头的 ./）
+            OPENSSL_REL_PATH=${OPENSSL_PATH#./}
+            echo "编译 OpenSSL: $OPENSSL_REL_PATH"
+            make $OPENSSL_REL_PATH/compile -j$(nproc) V=sc && echo "✓ OpenSSL 编译完成" || echo "⚠ OpenSSL 编译失败，继续..."
+          else
+            echo "⚠ 未找到 OpenSSL 包，跳过编译"
+          fi
           echo ""
           
           # 然后编译我们自定义的包
@@ -274,14 +289,14 @@ jobs:
           mkdir -p tmp_upload
           shopt -s nullglob 
           
-          # 查找并复制所有编译的包，包括语言包、libuv 和 openssl
+          # 查找并复制所有编译的包，包括语言包和 libuv
           for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
               [[ -d "$src_dir" ]] || continue
 
               echo "扫描目录: $src_dir"
 
-              # 查找所有相关包，包括语言包、libuv 和 openssl
-              for prefix in libuv openssl libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n; do
+              # 查找所有相关包，包括语言包和 libuv
+              for prefix in libuv libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n; do
                   for file in "$src_dir"/"$prefix"*; do
                       [[ -f "$file" ]] || continue
 
@@ -310,7 +325,7 @@ jobs:
               done
           else
               echo "错误: 没有找到文件进行打包"
-              find bin/packages -name "*libuv*" -o -name "*openssl*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
+              find bin/packages -name "*libuv*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
               exit 1
           fi
 
@@ -342,7 +357,6 @@ jobs:
 
           # 添加 SDK 包信息
           echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
-          echo "**openssl**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
 
@@ -392,7 +406,6 @@ jobs:
           echo "" >> release_body.md
           echo "## 📦 包含的软件包" >> release_body.md
           echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
-          echo "- **openssl**: 加密工具包 (来自 SDK)" >> release_body.md
           echo "- **libwebsockets-full**: 完整的 WebSocket 库" >> release_body.md
           echo "- **ttyd**: 通过 Web 共享终端" >> release_body.md
           echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面" >> release_body.md
@@ -429,7 +442,6 @@ jobs:
           echo "2. 解压后通过 opkg 安装所需的 ipk 文件" >> release_body.md
           echo "3. 注意依赖关系，建议按以下顺序安装：" >> release_body.md
           echo "   - libuv" >> release_body.md
-          echo "   - openssl" >> release_body.md
           echo "   - libwebsockets-full" >> release_body.md
           echo "   - ttyd" >> release_body.md
           echo "   - luci-app-ttyd" >> release_body.md
