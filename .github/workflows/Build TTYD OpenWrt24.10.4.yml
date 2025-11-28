@@ -376,7 +376,7 @@ jobs:
           
       - name: 创建统一的 Release 信息
         run: |
-          echo "# 🎉 OpenWrt 多平台软件包编译完成" > release_body.md
+          echo "# 🎉 OpenWrt 24.10.4 openssl3.x版本多平台软件包编译完成" > release_body.md
           echo "" >> release_body.md
           echo "## 📦 包含的软件包" >> release_body.md
           echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
