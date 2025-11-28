@@ -153,7 +153,7 @@ jobs:
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
             "package/feeds/luci/luci-app-ttyd" \
-            "package/feeds/luci/luci-app-diskman" ; do
+            "package/feeds/luci/luci-app-diskman"; do
             if [ -d "$dir" ]; then
               echo "删除 feeds 目录: $dir"
               rm -rf "$dir"
@@ -306,32 +306,33 @@ jobs:
         if: steps.compile.outputs.status == 'success'
         run: |
           cd sdk
-          echo "## 🚀 OpenWrt 软件包编译报告" > release_${{ matrix.platform }}.txt
-          echo "### 编译信息" >> release_${{ matrix.platform }}.txt
-          echo "**平台**: ${{ matrix.platform }}" >> release_${{ matrix.platform }}.txt
-          echo "**编译日期**: $(date)" >> release_${{ matrix.platform }}.txt
+          # 将版本信息文件直接放在 upload 目录中
+          echo "## 🚀 OpenWrt 软件包编译报告" > upload/release_${{ matrix.platform }}.txt
+          echo "### 编译信息" >> upload/release_${{ matrix.platform }}.txt
+          echo "**平台**: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.txt
+          echo "**编译日期**: $(date)" >> upload/release_${{ matrix.platform }}.txt
 
-          echo "### 编译的软件包" >> release_${{ matrix.platform }}.txt
-          echo "**包名**|**版本**" >> release_${{ matrix.platform }}.txt
-          echo "-|-" >> release_${{ matrix.platform }}.txt
+          echo "### 编译的软件包" >> upload/release_${{ matrix.platform }}.txt
+          echo "**包名**|**版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "-|-" >> upload/release_${{ matrix.platform }}.txt
 
           # 从 Makefiles 提取版本信息 - 我们自定义的包
           for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             if [ -f "feeds/custom_packages/package/$pkg/Makefile" ]; then
                 version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/$pkg/Makefile | tr -d ' ')
-                echo "**$pkg**|**$version**" >> release_${{ matrix.platform }}.txt
+                echo "**$pkg**|**$version**" >> upload/release_${{ matrix.platform }}.txt
             fi
           done
 
           # 添加 SDK 包信息
-          echo "**libuv**|**SDK 版本**" >> release_${{ matrix.platform }}.txt
-          echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> release_${{ matrix.platform }}.txt
-          echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> release_${{ matrix.platform }}.txt
+          echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
 
-          echo "### 文件列表" >> release_${{ matrix.platform }}.txt
-          echo "\`\`\`" >> release_${{ matrix.platform }}.txt
-          ls -la tmp_upload/ >> release_${{ matrix.platform }}.txt
-          echo "\`\`\`" >> release_${{ matrix.platform }}.txt
+          echo "### 文件列表" >> upload/release_${{ matrix.platform }}.txt
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.txt
+          ls -la tmp_upload/ >> upload/release_${{ matrix.platform }}.txt
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.txt
 
           echo "status=success" >> $GITHUB_OUTPUT
 
@@ -342,7 +343,7 @@ jobs:
           name: packages_${{ matrix.platform }}
           path: |
             ${{ env.FIRMWARE }}/packages_${{ matrix.platform }}.zip
-            ${{ env.FIRMWARE }}/../release_${{ matrix.platform }}.txt
+            ${{ env.FIRMWARE }}/release_${{ matrix.platform }}.txt
           retention-days: 30
 
   create_release:
