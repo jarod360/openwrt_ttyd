@@ -1,4 +1,4 @@
-name: Auto compile TTYD with OpenWrt SDK
+name: Auto compile TTYD with OpenWrt SDK - Detailed Logging
 
 on:
   repository_dispatch:
@@ -26,7 +26,6 @@ jobs:
       ttyd_version: ${{ steps.check_version.outputs.latest_version }}
       has_update: ${{ steps.check_version.outputs.has_update }}
       prerelease: ${{ steps.check_version.outputs.prerelease }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@main
@@ -39,29 +38,42 @@ jobs:
         env:
           url_tags: https://api.github.com/repos/${{ github.repository }}/releases/latest
         run: |
+          echo "🔍 Starting version check..."
+          # 检查TTYD版本
           if [ -f "package/ttyd/Makefile" ]; then
+            echo "📁 Found package/ttyd/Makefile"
             cd package/ttyd
-            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' Makefile | tr -d ' ')
+            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' Makefile | tr -d ' ')
           elif [ -f "ttyd/Makefile" ]; then
+            echo "📁 Found ttyd/Makefile"
             cd ttyd
-            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' Makefile | tr -d ' ')
+            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' Makefile | tr -d ' ')
           else
+            echo "⚠️ No Makefile found, using timestamp as version"
             ttyd_version=$(date +%Y%m%d-%H%M%S)
           fi
+          
+          echo "📦 Detected version: ${ttyd_version}"
+          echo "latest_version=${ttyd_version}" >> $GITHUB_OUTPUT
 
-          echo "latest_version=$ttyd_version" >> $GITHUB_OUTPUT
           prerelease=$([ "${{ github.ref_name }}" == "main" ] && echo false || echo true)
-          echo "prerelease=$prerelease" >> $GITHUB_OUTPUT
+          echo "prerelease=${prerelease}" >> $GITHUB_OUTPUT
 
+          # 检查是否需要更新
           if [ "${{ github.event_name }}" == "release" ]; then
+            echo "🎯 Release event detected, forcing update"
             echo "has_update=true" >> $GITHUB_OUTPUT
           else
+            echo "🌐 Checking remote releases..."
             remote_latest_version=$(wget -qO- -t1 -T2 ${url_tags} | jq -r '.tag_name')
             if [ -z "$remote_latest_version" ] || [ "$remote_latest_version" = "null" ]; then
+              echo "❌ Failed to fetch remote tags, assuming update needed"
               echo "has_update=true" >> $GITHUB_OUTPUT
             elif [ "$ttyd_version" = "$remote_latest_version" ]; then
+              echo "✅ No update needed (local: $ttyd_version, remote: $remote_latest_version)"
               echo "has_update=false" >> $GITHUB_OUTPUT
             else
+              echo "🔄 Update needed (local: $ttyd_version, remote: $remote_latest_version)"
               echo "has_update=true" >> $GITHUB_OUTPUT
             fi
           fi
@@ -69,20 +81,23 @@ jobs:
       - name: Prepare release info
         if: steps.check_version.outputs.has_update == 'true'
         run: |
-          echo "## :mega: TTYD Auto Build Update" > release.txt
-          echo "**TTYD Version:** ${{ steps.check_version.outputs.latest_version }}" >> release.txt
-          echo "**Build Date:** $(date '+%Y-%m-%d %H:%M:%S')" >> release.txt
-          echo "**Build Arch:** Multiple architectures" >> release.txt
+          echo "📝 Preparing release info..."
+          echo "## :mega: TTYD Auto Build Update" >> release.txt
+          echo "### Build Information" >> release.txt
+          echo "**:minidisc: TTYD Version: ${{steps.check_version.outputs.latest_version}}**" >> release.txt
+          echo "**:calendar: Build Date: $(date +'%Y-%m-%d %H:%M:%S')**" >> release.txt
+          echo "**:gear: Build Arch: Multiple architectures**" >> release.txt
+          touch release.txt
 
-      - name: Generate new tag
+      - name: Generate new tag & release
         if: steps.check_version.outputs.has_update == 'true' && github.event_name != 'release'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.check_version.outputs.latest_version }}
+          tag_name: ${{steps.check_version.outputs.latest_version}}
           target_commitish: ${{ github.ref_name }}
-          prerelease: ${{ steps.check_version.outputs.prerelease }}
+          prerelease: ${{steps.check_version.outputs.prerelease}}
           body_path: release.txt
 
   job_auto_compile:
@@ -90,126 +105,444 @@ jobs:
     if: needs.job_check.outputs.has_update == 'true'
     runs-on: ubuntu-latest
     name: Build TTYD (${{ matrix.ver }}-${{ matrix.platform }})
-
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Stable releases (IPK packages)
           - platform: x86_64
             url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-            ver: ipk
+            ver: "ipk"
+
           - platform: aarch64_cortex-a53
             url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-            ver: ipk
+            ver: "ipk"
+
           - platform: aarch64_cortex-a72
             url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-            ver: ipk
+            ver: "ipk"
+
+          # Snapshot releases (APK packages)
           - platform: x86_64
             url_sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-            ver: apk
+            ver: "apk"
+
           - platform: aarch64_cortex-a53
             url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa53/openwrt-sdk-mvebu-cortexa53_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-            ver: apk
+            ver: "apk"
+
           - platform: aarch64_cortex-a72
             url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa72/openwrt-sdk-mvebu-cortexa72_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-            ver: apk
+            ver: "apk"
 
     steps:
-      - uses: actions/checkout@main
+      - name: Checkout repository
+        uses: actions/checkout@main
         with:
           fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
-          sudo apt update
-          sudo apt install -y build-essential gawk gcc-multilib flex git gettext libncurses-dev \
-            libssl-dev python3-distutils zlib1g-dev unzip rsync curl jq tree zstd
+          echo "🔧 Installing build dependencies..."
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
+          echo "📦 Updating package lists..."
+          sudo -E apt-get -qq update
+          echo "📦 Installing build tools..."
+          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+            ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          echo "🧹 Cleaning up..."
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          echo "✅ Build dependencies installed"
 
-      - name: Download SDK
+      - name: Download and extract SDK
         run: |
+          echo "📥 Downloading SDK for ${{ matrix.platform }} (${{ matrix.ver }})..."
+          echo "🔗 SDK URL: ${{ matrix.url_sdk }}"
           wget -q --show-progress ${{ matrix.url_sdk }}
-          file=$(basename ${{ matrix.url_sdk }})
+          file_name=$(echo ${{ matrix.url_sdk }} | awk -F/ '{print $NF}')
+          echo "📦 File: $file_name"
           mkdir sdk
-          if [[ $file == *.tar.xz ]]; then
-            tar -xJf $file -C sdk --strip-components=1
+          if [[ $file_name == *.tar.xz ]]; then
+            echo "📂 Extracting .tar.xz..."
+            tar -xJf $file_name -C ./sdk --strip-components=1
+          elif [[ $file_name == *.tar.zst ]]; then
+            echo "📂 Extracting .tar.zst..."
+            tar --zstd -x -f $file_name -C ./sdk --strip-components=1
           else
-            tar --zstd -xf $file -C sdk --strip-components=1
+            echo "❌ Unsupported file format: $file_name"
+            exit 1
           fi
+          cd sdk
+          echo "✅ SDK extracted successfully"
+          echo "📁 SDK contents:"
+          ls -la
 
-      - name: Prepare logs and workspace
-        run: |
-          mkdir -p build_logs upload/packages
+      - name: SSH connection to Actions
+        uses: mxschmitt/action-tmate@v3
+        if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh != 'false') || contains(github.event.action, 'ssh')
 
-      - name: Fix feeds and update
+      - name: Remove existing TTYD packages from SDK
         run: |
           cd sdk
-          sed -i 's/git.openwrt.org/github.com\/openwrt/' feeds.conf.default
+          echo "🗑️ Removing existing TTYD related packages from SDK..."
+          
+          echo "🔍 Checking for existing packages..."
+          find feeds/packages -name "*libuv*" -o -name "*libwebsockets*" -o -name "*ttyd*" | head -10
+          find feeds/luci -name "*ttyd*" | head -10
+          
+          # Remove libuv if exists
+          echo "🧹 Removing libuv..."
+          rm -rf feeds/packages/libs/libuv
+          rm -rf package/feeds/packages/libuv
+          
+          # Remove libwebsockets if exists
+          echo "🧹 Removing libwebsockets..."
+          rm -rf feeds/packages/libs/libwebsockets
+          rm -rf package/feeds/packages/libwebsockets
+          
+          # Remove ttyd if exists
+          echo "🧹 Removing ttyd..."
+          rm -rf feeds/packages/utils/ttyd
+          rm -rf package/feeds/packages/ttyd
+          
+          # Remove luci-app-ttyd if exists
+          echo "🧹 Removing luci-app-ttyd..."
+          rm -rf feeds/luci/applications/luci-app-ttyd
+          rm -rf package/feeds/luci/luci-app-ttyd
+          
+          echo "✅ Existing TTYD packages removed from SDK"
+
+      - name: Copy custom packages to SDK
+        run: |
+          cd sdk
+          echo "📋 Copying custom packages to SDK..."
+          
+          echo "🔍 Checking repository structure..."
+          ls -la $GITHUB_WORKSPACE/
+          if [ -d "$GITHUB_WORKSPACE/package" ]; then
+            echo "📁 Found package directory"
+            ls -la $GITHUB_WORKSPACE/package/
+          fi
+          
+          # Create directory structure
+          mkdir -p package/custom
+          
+          # Copy all packages from repository
+          if [ -d "$GITHUB_WORKSPACE/package" ]; then
+            echo "📥 Copying package directory..."
+            cp -r $GITHUB_WORKSPACE/package/* package/custom/
+          else
+            echo "📥 Copying entire workspace..."
+            cp -r $GITHUB_WORKSPACE/* package/custom/
+          fi
+          
+          echo "✅ Custom packages copied to SDK"
+          echo "📁 Custom packages contents:"
+          ls -la package/custom/
+
+      - name: Configure SDK
+        run: |
+          cd sdk
+          echo "⚙️ Configuring SDK..."
+          
+          # Update feeds to github source
+          echo "🔄 Updating feeds to GitHub source..."
+          sed -i \
+              -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
+              -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
+              "feeds.conf.default"
+
+          echo "📋 Updated feeds.conf.default:"
+          cat feeds.conf.default | head -20
+
+          # Update feeds
+          echo "🔄 Updating feeds..."
           ./scripts/feeds update -a
+          echo "📦 Installing feeds..."
           ./scripts/feeds install -a
 
-      - name: Remove existing built-in TTYD
-        run: |
-          cd sdk
-          rm -rf feeds/packages/utils/ttyd
-          rm -rf feeds/luci/applications/luci-app-ttyd
+          echo "🔍 Checking installed packages..."
+          find package/feeds -name "*libuv*" -o -name "*libwebsockets*" -o -name "*ttyd*" | head -10
 
-      - name: Copy custom packages
-        run: |
-          cd sdk
-          mkdir -p package/custom
-          cp -r $GITHUB_WORKSPACE/package/* package/custom/ || true
-          tree package/custom || true
+          # Apply patches if needed
+          echo "🔧 Applying patches..."
 
-      - name: Generate minimal .config
-        run: |
-          cd sdk
-          echo "CONFIG_ALL=n" > .config
+          # Update golang and rust versions if needed
+          rm -rf temp_resp
+          git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
+          if [ -d "feeds/packages/lang/golang" ]; then
+            echo "🔄 Updating golang version"
+            rm -rf feeds/packages/lang/golang
+            cp -r temp_resp/lang/golang feeds/packages/lang
+          fi
+          if [ -d "feeds/packages/lang/rust" ]; then
+            echo "🔄 Updating rust version"
+            rm -rf feeds/packages/lang/rust
+            cp -r temp_resp/lang/rust feeds/packages/lang
+          fi
+          rm -rf temp_resp
+
+          # Update patch-kernel.sh
+          git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
+          cp -f temp_resp/scripts/patch-kernel.sh scripts/
+          rm -rf temp_resp
+
+          echo "✅ Patch application completed"
+
+          # Configure build
+          echo "📝 Configuring build..."
+          echo "CONFIG_ALL_NONSHARED=n" > .config
+          echo "CONFIG_ALL_KMODS=n" >> .config
+          echo "CONFIG_ALL=n" >> .config
+          echo "CONFIG_AUTOREMOVE=n" >> .config
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
+          
+          # Enable packages
           echo "CONFIG_PACKAGE_libuv=y" >> .config
           echo "CONFIG_PACKAGE_libwebsockets-full=y" >> .config
           echo "CONFIG_PACKAGE_ttyd=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+
+          echo "📋 .config contents:"
+          cat .config
+
+          echo "🔧 Running defconfig..."
           make defconfig
 
-      - name: Build dependencies
+          echo "✅ SDK configuration completed"
+
+      - name: Build Stage 1 - Dependencies
         run: |
           cd sdk
-          make package/libuv/compile V=s -j$(nproc)
-          make package/libwebsockets-full/compile V=s -j$(nproc)
+          echo "🏗️ STAGE 1: Building dependencies..."
+          
+          echo "🔍 Checking available packages..."
+          find package/custom -name "Makefile" | head -10
+          
+          # Build libuv first
+          if [ -d "package/custom/libuv" ]; then
+            echo "🔨 Building libuv..."
+            echo "📁 libuv Makefile:"
+            cat package/custom/libuv/Makefile | head -20
+            make package/custom/libuv/compile -j$(nproc) V=sc
+            LIBUV_RESULT=$?
+            if [ $LIBUV_RESULT -eq 0 ]; then
+              echo "✅ libuv built successfully"
+            else
+              echo "❌ libuv build failed with exit code $LIBUV_RESULT"
+              exit $LIBUV_RESULT
+            fi
+          else
+            echo "❌ libuv directory not found"
+            exit 1
+          fi
+          
+          echo "⏳ Waiting 5 seconds before next build..."
+          sleep 5
+          
+          # Build libwebsockets-full second
+          if [ -d "package/custom/libwebsockets-full" ]; then
+            echo "🔨 Building libwebsockets-full..."
+            echo "📁 libwebsockets-full Makefile:"
+            cat package/custom/libwebsockets-full/Makefile | head -20
+            make package/custom/libwebsockets-full/compile -j$(nproc) V=sc
+            LIBWEBSOCKETS_RESULT=$?
+            if [ $LIBWEBSOCKETS_RESULT -eq 0 ]; then
+              echo "✅ libwebsockets-full built successfully"
+            else
+              echo "❌ libwebsockets-full build failed with exit code $LIBWEBSOCKETS_RESULT"
+              exit $LIBWEBSOCKETS_RESULT
+            fi
+          else
+            echo "❌ libwebsockets-full directory not found"
+            exit 1
+          fi
 
-      - name: Build TTYD
+          echo "✅ Stage 1 completed - All dependencies built"
+
+      - name: Verify Stage 1 Build
         run: |
           cd sdk
-          make package/ttyd/compile V=s -j$(nproc)
+          echo "🔍 STAGE 1 VERIFICATION: Checking built dependencies..."
+          
+          echo "📁 Checking staging directory for libuv:"
+          find staging_dir -name "*libuv*" -type f | head -10 || echo "No libuv files found"
+          
+          echo "📁 Checking staging directory for libwebsockets:"
+          find staging_dir -name "*libwebsockets*" -type f | head -10 || echo "No libwebsockets files found"
+          
+          echo "📁 Checking bin directory for packages:"
+          find bin -name "*.ipk" -o -name "*.apk" | head -10 || echo "No package files found"
+          
+          echo "✅ Stage 1 verification completed"
 
-      - name: Build LuCI
+      - name: Build Stage 2 - TTYD and LuCI
+        id: build_stage2
         run: |
           cd sdk
-          make package/luci-app-ttyd/compile V=s -j$(nproc)
+          echo "🏗️ STAGE 2: Building TTYD and LuCI app..."
+          
+          # Build ttyd
+          if [ -d "package/custom/ttyd" ]; then
+            echo "🔨 Building ttyd..."
+            echo "📁 ttyd Makefile:"
+            cat package/custom/ttyd/Makefile | head -20
+            
+            echo "🔍 Checking dependencies for ttyd..."
+            find staging_dir -name "libuv.so*" -o -name "libwebsockets.so*" | head -10
+            
+            make package/custom/ttyd/compile -j$(nproc) V=sc
+            TTYD_RESULT=$?
+            if [ $TTYD_RESULT -eq 0 ]; then
+              echo "✅ ttyd built successfully"
+            else
+              echo "❌ ttyd build failed with exit code $TTYD_RESULT"
+              echo "📋 Last 50 lines of build log:"
+              tail -50 build_dir/target-*/ttyd*/log*
+              exit $TTYD_RESULT
+            fi
+          else
+            echo "❌ ttyd directory not found"
+            exit 1
+          fi
+          
+          echo "⏳ Waiting 5 seconds before next build..."
+          sleep 5
+          
+          # Build luci-app-ttyd
+          if [ -d "package/custom/luci-app-ttyd" ]; then
+            echo "🔨 Building luci-app-ttyd..."
+            echo "📁 luci-app-ttyd Makefile:"
+            cat package/custom/luci-app-ttyd/Makefile | head -20
+            
+            make package/custom/luci-app-ttyd/compile -j$(nproc) V=sc
+            LUCI_RESULT=$?
+            if [ $LUCI_RESULT -eq 0 ]; then
+              echo "✅ luci-app-ttyd built successfully"
+            else
+              echo "❌ luci-app-ttyd build failed with exit code $LUCI_RESULT"
+              exit $LUCI_RESULT
+            fi
+          else
+            echo "⚠️ luci-app-ttyd directory not found, skipping"
+          fi
 
-      - name: Collect built packages
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ Stage 2 completed - All packages built"
+
+      - name: Verify Final Build
         run: |
           cd sdk
-          find bin -type f \( -name "*.ipk" -o -name "*.apk" \) -exec cp {} upload/packages/ \;
+          echo "🔍 FINAL VERIFICATION: Checking all built packages..."
+          
+          echo "📦 All built packages:"
+          find bin -name "*.ipk" -o -name "*.apk" | sort
+          
+          echo "📊 Package sizes:"
+          find bin -name "*.ipk" -o -name "*.apk" -exec ls -lh {} \;
+          
+          echo "🔍 TTYD related packages:"
+          find bin -name "*ttyd*" -o -name "*libuv*" -o -name "*libwebsockets*" | sort
+          
+          echo "✅ Final verification completed"
 
-      - name: Create ZIP
+      - name: Collect compiled packages
+        id: collect
+        if: steps.build_stage2.outputs.status == 'success'
         run: |
-          cd sdk/upload/packages
-          zip -r ../ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip .
+          cd sdk
+          echo "📦 Collecting compiled packages..."
+          mkdir -p upload/packages
+          
+          # Find and copy all compiled packages
+          echo "🔍 Searching for compiled packages..."
+          find bin -name "*.ipk" -o -name "*.apk" | while read file; do
+            if echo "$file" | grep -q -E "(libuv|libwebsockets|ttyd|luci-app-ttyd)"; then
+              cp -v "$file" upload/packages/
+            fi
+          done
+          
+          echo "📋 Collected packages:"
+          ls -la upload/packages/
+          
+          # Create archive with architecture info
+          cd upload/packages
+          echo "🗜️ Creating archive..."
+          zip -r ../ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip ./*
+          cd ..
+          
+          echo "📁 Archive contents:"
+          ls -la
+          
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "✅ Package collection completed"
 
-      - name: Upload artifacts (logs + packages)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ttyd_${{ matrix.platform }}_${{ matrix.ver }}
-          path: sdk/upload
+      - name: Generate package info
+        id: info
+        if: steps.build_stage2.outputs.status == 'success'
+        run: |
+          cd sdk
+          echo "📝 Generating package info..."
+          echo "### TTYD Packages Version" >> release_info.txt
+          echo "**Package**|**Version**" >> release_info.txt
+          echo "-|-" >> release_info.txt
 
-      - name: Upload to Release
+          # Get versions from Makefiles
+          for pkg in libuv libwebsockets-full ttyd luci-app-ttyd; do
+            if [ -f "package/custom/$pkg/Makefile" ]; then
+              version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' package/custom/$pkg/Makefile | tr -d ' ')
+              echo "**$pkg**|**$version**" >> release_info.txt
+              echo "📦 $pkg version: $version"
+            elif [ -f "package/custom/package/$pkg/Makefile" ]; then
+              version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' package/custom/package/$pkg/Makefile | tr -d ' ')
+              echo "**$pkg**|**$version**" >> release_info.txt
+              echo "📦 $pkg version: $version"
+            else
+              echo "⚠️ $pkg Makefile not found"
+            fi
+          done
+
+          echo "📋 Release info:"
+          cat release_info.txt
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload packages to release
         uses: softprops/action-gh-release@v2
+        if: steps.info.outputs.status == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ needs.job_check.outputs.ttyd_version }}
           files: |
-            sdk/upload/packages/*.ipk
-            sdk/upload/packages/*.apk
-            sdk/upload/ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip
+            ${{ env.FIRMWARE }}/ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip
+            ${{ env.FIRMWARE }}/packages/*.ipk
+            ${{ env.FIRMWARE }}/packages/*.apk
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttyd-${{ matrix.platform }}-${{ matrix.ver }}
+          path: |
+            ${{ env.FIRMWARE }}/packages/*
+            ${{ env.FIRMWARE }}/ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload build logs for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.platform }}-${{ matrix.ver }}
+          path: |
+            sdk/build_dir/**/log*
+            sdk/build_dir/**/*.log
+          retention-days: 7
