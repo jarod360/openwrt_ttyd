@@ -1,6 +1,6 @@
 #
 # Copyright (c) 2022-2025 SMALLPROGRAM
-# Description: Auto compile ttyd with OpenWrt SDK, OpenSSL 1.1.1 only
+# Description: Auto compile ttyd with OpenWrt 22.03 SDK, OpenSSL 1.1.1 only
 #
 name: "Auto compile ttyd with OpenWrt 22.03 SDK"
 
@@ -30,19 +30,19 @@ jobs:
       matrix:
         include:
           - platform: x86_64
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-10.3.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_generic
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/rockchip/armv8/openwrt-sdk-22.03.5-rockchip-armv8_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/rockchip/armv8/openwrt-sdk-22.03.5-rockchip-armv8_gcc-10.3.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_cortex-a53
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa53/openwrt-sdk-22.03.5-mvebu-cortexa53_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa53/openwrt-sdk-22.03.5-mvebu-cortexa53_gcc-10.3.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_cortex-a72
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa72/openwrt-sdk-22.03.5-mvebu-cortexa72_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa72/openwrt-sdk-22.03.5-mvebu-cortexa72_gcc-10.3.0_musl.Linux-x86_64.tar.xz
           - platform: arm_cortex-a7_neon-vfpv4
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/sunxi/cortexa7/openwrt-sdk-22.03.5-sunxi-cortexa7_gcc-11.2.0_musl_eabi.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/sunxi/cortexa7/openwrt-sdk-22.03.5-sunxi-cortexa7_gcc-10.3.0_musl_eabi.Linux-x86_64.tar.xz
           - platform: mips_24kc
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ath79/generic/openwrt-sdk-22.03.5-ath79-generic_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ath79/generic/openwrt-sdk-22.03.5-ath79-generic_gcc-10.3.0_musl.Linux-x86_64.tar.xz
           - platform: mipsel_24kc
-            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ramips/rt288x/openwrt-sdk-22.03.5-ramips-rt288x_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ramips/rt288x/openwrt-sdk-22.03.5-ramips-rt288x_gcc-10.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
       - name: 初始化环境
@@ -76,6 +76,9 @@ jobs:
 
       - name: 配置 .config
         run: |
+          cd sdk
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_PACKAGE_openssl=m" >> .config
           echo "CONFIG_PACKAGE_openssl3=n" >> .config
@@ -91,14 +94,17 @@ jobs:
 
       - name: 编译 SDK OpenSSL 1.1.1
         run: |
+          cd sdk
           make package/libs/openssl/compile -j$(nproc) V=sc
 
       - name: 强制 libwebsockets-full 链接 OpenSSL 1.1.1
         run: |
+          cd sdk
           sed -i 's/DEPENDS:=openssl.*/DEPENDS:=+openssl/' package/feeds/custom_packages/libwebsockets-full/Makefile
 
       - name: 编译自定义包
         run: |
+          cd sdk
           for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
           done
@@ -108,6 +114,7 @@ jobs:
 
       - name: 打包输出
         run: |
+          cd sdk
           mkdir -p tmp_upload upload
           cp bin/packages/*/*/{openssl*,libuv*,libwebsockets*,ttyd*,luci-app*,luci-i18n*} tmp_upload/ || true
           zip -jr upload/packages_${{ matrix.platform }}.zip tmp_upload/*
@@ -115,6 +122,7 @@ jobs:
 
       - name: 生成 Release 信息
         run: |
+          cd sdk
           echo "## OpenWrt ${{ matrix.platform }} Packages" > upload/release_${{ matrix.platform }}.md
           echo "- 平台: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.md
           echo "- 编译日期: $(date)" >> upload/release_${{ matrix.platform }}.md
