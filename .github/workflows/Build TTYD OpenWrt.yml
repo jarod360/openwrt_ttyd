@@ -275,6 +275,11 @@ jobs:
                       [[ -f "$file" ]] || continue
 
                       filename=$(basename "$file")
+                      # 排除不需要的 luci-i18n-base-zh-cn 包
+                      if [[ "$filename" == *"luci-i18n-base-zh-cn"* ]]; then
+                          echo "  跳过文件: $filename (不需要的包)"
+                          continue
+                      fi
                       echo "  找到文件: $filename"
                       cp -r "$file" "tmp_upload/"
                   done
@@ -358,13 +363,16 @@ jobs:
         with:
           path: artifacts
           
-      - name: 生成随机标签名
-        id: random_tag
+      - name: 生成随机标签名和发布日期
+        id: date_info
         run: |
           # 生成4位随机数
           RANDOM_SUFFIX=$(shuf -i 1000-9999 -n 1)
+          CURRENT_DATE=$(date +%Y-%m-%d)
           echo "随机后缀: $RANDOM_SUFFIX"
+          echo "当前日期: $CURRENT_DATE"
           echo "tag_name=openwrt-packages-$(date +%Y%m%d)-${RANDOM_SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_date=$CURRENT_DATE" >> $GITHUB_OUTPUT
           
       - name: 创建统一的 Release 信息
         run: |
@@ -432,8 +440,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.random_tag.outputs.tag_name }}
-          name: "OpenWrt Packages - $(date +%Y-%m-%d)"
+          tag_name: ${{ steps.date_info.outputs.tag_name }}
+          name: "OpenWrt Packages - ${{ steps.date_info.outputs.release_date }}"
           body_path: release_body.md
           files: release_files/*.zip
           draft: false
