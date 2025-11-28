@@ -1,110 +1,176 @@
-name: "OpenWrt SDK Build - B"
+name: "Auto compile ttyd (B full version)"
 
 on:
+  repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
-        description: "SSH into Actions"
+        description: 'SSH connection to Actions'
         required: false
-        default: "false"
+        default: 'false'
+
+# 必须：修复你之前遇到的 403 错误
+permissions:
+  contents: write
 
 env:
   TZ: Asia/Shanghai
-  REPO_URL: https://github.com/jarod360/openwrt_ttyd
+  repo_name: ${{ github.repository }}
+  package_name: "ttyd"
+  luci_package: "luci-app-ttyd"
 
 jobs:
-  build:
-    name: Build (${ { matrix.platform } })
+  job_check:
+    name: Check version
     runs-on: ubuntu-22.04
+    outputs:
+      has_update: ${{ steps.check_version.outputs.has_update }}
+      new_tag: ${{ steps.check_version.outputs.new_tag }}
+      prerelease: ${{ steps.check_version.outputs.prerelease }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Check version
+        id: check_version
+        run: |
+          cd ${{ env.package_name }}
+          version=$(awk -F ':=' '/PKG_VERSION:=/{print $2}' Makefile | sed 's/\r//g')
+          release=$(awk -F ':=' '/PKG_RELEASE:=/{print $2}' Makefile | sed 's/\r//g')
+
+          new_tag="${version}-${release}"
+          echo "new_tag=${new_tag}" >> $GITHUB_OUTPUT
+
+          latest=$(git tag --sort=-v:refname | head -n 1)
+
+          if [ "$latest" = "$new_tag" ]; then
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          fi
+
+          if [ "${{ github.ref_name }}" == "main" ]; then
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+
+      - name: Prepare release
+        if: steps.check_version.outputs.has_update == 'true'
+        run: |
+          echo "## :mega: TTYD Build" > release.txt
+          echo "**Version: ${{ steps.check_version.outputs.new_tag }}**" >> release.txt
+          echo "" >> release.txt
+
+
+      - name: Generate new tag & release
+        if: steps.check_version.outputs.has_update == 'true'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.check_version.outputs.new_tag }}
+          target_commitish: ${{ github.ref_name }}
+          prerelease: ${{ steps.check_version.outputs.prerelease }}
+          body_path: release.txt
+
+  # =========================================================================
+  #  多平台构建（完整 B 模式）
+  # =========================================================================
+
+  job_build:
+    name: Compile TTYD [${{ matrix.platform }}]
+    needs: job_check
+    if: needs.job_check.outputs.has_update == 'true'
+    runs-on: ubuntu-22.04
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: x86_64
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: aarch64_generic
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
-          - platform: mips_24kc
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
 
-          # Snapshots
+          - platform: aarch64_generic
+            sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: mips_24kc
+            sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+          - platform: mipsel_24kc
+            sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
           - platform: x86_64_snapshot
-            url_sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+
           - platform: aarch64_generic_snapshot
-            url_sdk: https://downloads.openwrt.org/snapshots/targets/rockchip/armv8/openwrt-sdk-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sdk: https://downloads.openwrt.org/snapshots/targets/rockchip/armv8/openwrt-sdk-rockchip-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Dependencies
+      - name: Prepare Build Environment
         run: |
-          sudo apt update
-          sudo apt install -y \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
-            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
-            fastjar flex gawk gettext gcc-multilib g++-multilib git gnutls-dev \
-            gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev \
-            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev \
-            libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev libz-dev \
-            lld llvm lrzsz mkisofs msmtp ninja-build p7zip-full patch pkgconf python3 \
-            python3-pip python3-docutils python3-ply python3-pyelftools qemu-utils \
-            re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
-            unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo apt-get update -qq
+          sudo apt-get install -yq \
+            build-essential clang flex bison gawk gcc-multilib g++-multilib \
+            gettext git libncurses-dev libssl-dev python3 python3-pip \
+            unzip rsync swig zstd file wget curl
 
       - name: Download SDK
         run: |
-          wget ${{ matrix.url_sdk }}
-          FILE=$(basename ${{ matrix.url_sdk }})
+          wget -q ${{ matrix.sdk }}
+          fname=$(basename ${{ matrix.sdk }})
           mkdir sdk
-          if [[ $FILE == *.tar.xz ]]; then
-            tar -xJf $FILE -C sdk --strip-components=1
-          else
-            tar --zstd -xf $FILE -C sdk --strip-components=1
-          fi
+          tar --zstd -xf "$fname" -C sdk --strip-components=1
 
-      - name: Prepare Feeds
+      - name: Override SDK TTYD with your source
         run: |
           cd sdk
-          sed -i \
-            -e 's|git.openwrt.org/feed|github.com/openwrt|g' \
-            -e 's|git.openwrt.org/project|github.com/openwrt|g' \
-            -e 's|git.openwrt.org/openwrt|github.com/openwrt|g' \
-            feeds.conf.default
+          rm -rf feeds/packages/net/ttyd
+          rm -rf feeds/luci/applications/luci-app-ttyd
 
-          echo "src-git myrepo ${{ env.REPO_URL }};main" >> feeds.conf.default
+          mkdir -p package/ttyd
+          cp -r $GITHUB_WORKSPACE/ttyd/* package/ttyd/
 
+          mkdir -p package/luci-app-ttyd
+          cp -r $GITHUB_WORKSPACE/luci-app-ttyd/* package/luci-app-ttyd/
+
+      - name: Update Feeds
+        run: |
+          cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: SSH to Actions
-        uses: mxschmitt/action-tmate@v3
-        if: github.event.inputs.ssh == 'true'
+      - name: SSH Debug
+        if: (github.event.inputs.ssh == 'true')
+        uses: mxschmitt/action-tmate@v3.13
 
-      - name: Configure Build
+      - name: Build
         run: |
           cd sdk
           echo "CONFIG_ALL=n" > .config
-          echo "CONFIG_PACKAGE_luci-app-ttyd=m" >> .config
-          echo "CONFIG_PACKAGE_ttyd=m" >> .config
-          make defconfig
+          echo "CONFIG_PACKAGE_${{ env.package_name }}=m" >> .config
+          echo "CONFIG_PACKAGE_${{ env.luci_package }}=m" >> .config
 
-      - name: Build Package
-        run: |
-          cd sdk
-          make package/ttyd/{clean,compile} -j$(nproc) V=s || true
-          make package/luci-app-ttyd/{clean,compile} -j$(nproc) V=s || true
+          make defconfig
+          make package/${{ env.package_name }}/{clean,compile} -j$(nproc) V=s
+          make package/${{ env.luci_package }}/{clean,compile} -j$(nproc) V=s
 
       - name: Collect Artifacts
         run: |
           cd sdk
-          mkdir -p upload
-          find bin/packages -name "*.ipk" -exec cp {} upload/ \;
+          mkdir upload
+          cp bin/packages/*/*/ttyd*.ipk upload/ || true
+          cp bin/packages/*/*/luci-app-ttyd*.ipk upload/ || true
+          zip -jr ttyd_${{ matrix.platform }}.zip upload/
 
-      - name: Upload Release
+      - name: Upload to release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: "build-${{ github.run_id }}"
-          files: sdk/upload/*.ipk
+          tag_name: ${{ needs.job_check.outputs.new_tag }}
+          files: | 
+            sdk/ttyd_${{ matrix.platform }}.zip
