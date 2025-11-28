@@ -3,14 +3,17 @@
 # Description: Auto compile ttyd with openwrt sdk
 #
 name: "Auto compile ttyd with openwrt sdk"
+
+# 修复权限问题
 permissions:
   contents: write
+
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'SSH connection to Actions'
+        description: 'SSH连接 Actions'
         required: false
         default: 'false'
 env:
@@ -26,6 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 稳定版 (ipk) 平台
           - platform: x86_64
             url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ver: "ipk"
@@ -54,6 +58,7 @@ jobs:
             url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             ver: "ipk"
 
+          # 开发版 (apk) 平台
           - platform: x86_64
             url_sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
             ver: "apk"
@@ -83,10 +88,10 @@ jobs:
             ver: "apk"
 
     steps:
-      - name: Initialization ${{ matrix.platform }} compile environment
+      - name: 初始化 ${{ matrix.platform }} 编译环境
         run: |
           sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android
-          echo "Install packages"
+          echo "安装编译依赖包"
           sudo -E apt-get -qq update
           sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
             bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
@@ -99,7 +104,7 @@ jobs:
           sudo -E apt-get -qq autoremove --purge
           sudo -E apt-get -qq clean
 
-      - name: ${{ matrix.platform }} sdk download
+      - name: 下载 ${{ matrix.platform }} SDK
         run: |
           wget ${{ matrix.url_sdk }}
           file_name=$(echo ${{matrix.url_sdk}} | awk -F/ '{print $NF}')
@@ -109,27 +114,66 @@ jobs:
           elif [[ $file_name == *.tar.zst ]]; then
             tar --zstd -x -f $file_name -C ./sdk --strip-components=1
           else
-            echo "Unsupported file format: $file_name"
+            echo "不支持的文件格式: $file_name"
             exit 1
           fi
           cd sdk
 
-      - name: SSH connection to Actions
+      - name: SSH 连接到 Actions
         uses: mxschmitt/action-tmate@v3.13
         if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
 
-      - name: ${{ matrix.platform }} feeds configuration
+      - name: 配置 ${{ matrix.platform }} feeds 并彻底删除 SDK 包
         run: |
           cd sdk
           
-          # Update feeds to github source
+          echo "=== 开始彻底删除 SDK 中的相关包 ==="
+          
+          # 使用 find 命令搜索所有相关包的位置
+          echo "搜索 ttyd 相关文件..."
+          find . -type d -name "*ttyd*" | head -20
+          
+          echo "搜索 libwebsockets 相关文件..."
+          find . -type d -name "*libwebsockets*" | head -20
+          
+          # 彻底删除所有可能位置的包
+          echo "开始删除包..."
+          for dir in \
+            "package/feeds/packages/ttyd" \
+            "package/feeds/packages/libwebsockets" \
+            "package/feeds/luci/luci-app-ttyd" \
+            "package/feeds/base/ttyd" \
+            "package/feeds/base/libwebsockets" \
+            "package/feeds/base/luci-app-ttyd" \
+            "package/network/services/ttyd" \
+            "package/network/services/libwebsockets" \
+            "feeds/packages/utils/ttyd" \
+            "feeds/packages/libs/libwebsockets" \
+            "feeds/luci/applications/luci-app-ttyd" \
+            "feeds/base/ttyd" \
+            "feeds/base/libwebsockets" \
+            "feeds/base/luci-app-ttyd"; do
+            if [ -d "$dir" ]; then
+              echo "删除目录: $dir"
+              rm -rf "$dir"
+            fi
+          done
+          
+          # 再次搜索确认删除结果
+          echo "=== 确认删除结果 ==="
+          echo "剩余 ttyd 相关目录:"
+          find . -type d -name "*ttyd*" | head -10
+          echo "剩余 libwebsockets 相关目录:"
+          find . -type d -name "*libwebsockets*" | head -10
+          
+          # 更新 feeds 到 github 源
           sed -i \
               -e 's|git\.openwrt\.org/feed|github.com/openwrt|g' \
               -e 's|git\.openwrt\.org/project|github.com/openwrt|g' \
               -e 's|git\.openwrt\.org/openwrt|github.com/openwrt|g' \
               "feeds.conf.default"
 
-          # Add our repository to feeds
+          # 添加我们的仓库到 feeds
           cat > feeds.tmp <<'EOF'
           src-git custom_packages https://github.com/${{ env.repo }}.git;${{ github.ref_name }}
           EOF
@@ -139,20 +183,45 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-          #--------------------------------------begin_patches------------------------------------------
-          echo "Start applying the patch"
+          # 再次检查并删除可能通过 feeds 重新安装的包
+          echo "=== 再次检查并删除 feeds 安装的包 ==="
+          for dir in \
+            "package/feeds/packages/ttyd" \
+            "package/feeds/packages/libwebsockets" \
+            "package/feeds/luci/luci-app-ttyd"; do
+            if [ -d "$dir" ]; then
+              echo "删除 feeds 目录: $dir"
+              rm -rf "$dir"
+            fi
+          done
 
-          # Remove existing packages from SDK to ensure we use our own
-          echo "Removing existing ttyd related packages from SDK..."
-          rm -rf package/feeds/packages/ttyd
-          rm -rf package/feeds/packages/libwebsockets
-          rm -rf package/feeds/luci/luci-app-ttyd
-          rm -rf package/feeds/luci/luci-app-ttyd
+          # 验证我们的包是否存在
+          echo "=== 验证我们的包 ==="
+          if [ -d "feeds/custom_packages/package/ttyd" ]; then
+            echo "✓ 找到我们的 ttyd 包"
+          else
+            echo "✗ 未找到我们的 ttyd 包"
+            exit 1
+          fi
           
-          # Update essential components
+          if [ -d "feeds/custom_packages/package/luci-app-ttyd" ]; then
+            echo "✓ 找到我们的 luci-app-ttyd 包"
+          else
+            echo "✗ 未找到我们的 luci-app-ttyd 包"
+            exit 1
+          fi
+          
+          if [ -d "feeds/custom_packages/package/libwebsockets-full" ]; then
+            echo "✓ 找到我们的 libwebsockets-full 包"
+          else
+            echo "✗ 未找到我们的 libwebsockets-full 包"
+            exit 1
+          fi
+
+          # 更新必要的组件
           rm -rf temp_resp
           git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
-          echo "update golang version"
+          echo "更新 golang 版本"
           rm -rf feeds/packages/lang/golang
           cp -r temp_resp/lang/golang feeds/packages/lang
           rm -rf temp_resp
@@ -161,10 +230,7 @@ jobs:
           cp -f temp_resp/scripts/patch-kernel.sh scripts/
           rm -rf temp_resp
 
-          echo "Patch application completed"
-          #--------------------------------------end_patches--------------------------------------------
-
-          # Configure for ttyd compilation
+          # 配置编译选项
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_ALL_KMODS=n" >> .config
           echo "CONFIG_ALL=n" >> .config
@@ -177,49 +243,58 @@ jobs:
 
           make defconfig
 
-      - name: ${{ matrix.platform }} compile ttyd packages
+      - name: ${{ matrix.platform }} 编译 ttyd 包
         id: compile
         run: |
           cd sdk
-          echo "=== Starting compilation of ttyd packages ==="
+          echo "=== 开始编译 ttyd 相关包 ==="
           
-          # Compile libwebsockets-full first (dependency)
+          # 验证当前编译的是我们的包
+          echo "=== 验证编译源 ==="
+          echo "libwebsockets-full 路径:"
+          find . -path "*/libwebsockets-full/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 libwebsockets-full"
+          echo "ttyd 路径:"
+          find . -path "*/ttyd/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 ttyd"
+          echo "luci-app-ttyd 路径:"
+          find . -path "*/luci-app-ttyd/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 luci-app-ttyd"
+          
+          # 编译 libwebsockets-full (依赖)
           if [ -d "feeds/custom_packages/package/libwebsockets-full" ]; then
-              echo "-----------begin compile libwebsockets-full ---------------"
+              echo "----------- 开始编译 libwebsockets-full ---------------"
               make package/feeds/custom_packages/libwebsockets-full/compile -j$(nproc) V=sc
-              echo "-----------compiled libwebsockets-full ---------------"
+              echo "✓ libwebsockets-full 编译完成"
               echo ""
           else
-              echo "ERROR: libwebsockets-full not found in custom_packages"
+              echo "✗ 错误: 在 custom_packages 中未找到 libwebsockets-full"
               exit 1
           fi
 
-          # Compile ttyd
+          # 编译 ttyd
           if [ -d "feeds/custom_packages/package/ttyd" ]; then
-              echo "-----------begin compile ttyd ---------------"
+              echo "----------- 开始编译 ttyd ---------------"
               make package/feeds/custom_packages/ttyd/compile -j$(nproc) V=sc
-              echo "-----------compiled ttyd ---------------"
+              echo "✓ ttyd 编译完成"
               echo ""
           else
-              echo "ERROR: ttyd not found in custom_packages"
+              echo "✗ 错误: 在 custom_packages 中未找到 ttyd"
               exit 1
           fi
 
-          # Compile luci-app-ttyd
+          # 编译 luci-app-ttyd
           if [ -d "feeds/custom_packages/package/luci-app-ttyd" ]; then
-              echo "-----------begin compile luci-app-ttyd ---------------"
+              echo "----------- 开始编译 luci-app-ttyd ---------------"
               make package/feeds/custom_packages/luci-app-ttyd/compile -j$(nproc) V=sc
-              echo "-----------compiled luci-app-ttyd ---------------"
+              echo "✓ luci-app-ttyd 编译完成"
               echo ""
           else
-              echo "ERROR: luci-app-ttyd not found in custom_packages"
+              echo "✗ 错误: 在 custom_packages 中未找到 luci-app-ttyd"
               exit 1
           fi
 
-          echo "=== All packages compiled successfully ==="
+          echo "=== 所有包编译成功 ==="
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Organize ${{ matrix.platform }} files
+      - name: 整理 ${{ matrix.platform }} 文件
         id: organize
         if: steps.compile.outputs.status == 'success'
         run: |
@@ -228,52 +303,55 @@ jobs:
           mkdir -p tmp_upload
           shopt -s nullglob 
           
-          # Find and copy all compiled packages
+          # 查找并复制所有编译的包
           for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
               [[ -d "$src_dir" ]] || continue
 
-              echo "Scanning: $src_dir"
+              echo "扫描目录: $src_dir"
 
               for prefix in libwebsockets ttyd luci-app-ttyd; do
                   for file in "$src_dir"/"$prefix"*; do
                       [[ -f "$file" ]] || continue
 
                       filename=$(basename "$file")
-                      echo "  Found: $filename"
+                      echo "  找到文件: $filename"
                       cp -r "$file" "tmp_upload/"
                   done
               done
           done
 
-          # Create upload directory and package files
+          # 创建上传目录并打包文件
           mkdir -p upload
           if [ "$(ls -A tmp_upload/)" ]; then
               zip -jr upload/ttyd_packages_${{ matrix.ver }}_${{ matrix.platform }}.zip tmp_upload/*
-              echo "Files packaged successfully"
+              echo "文件打包成功"
+              echo "打包的文件:"
+              ls -la tmp_upload/
           else
-              echo "ERROR: No files found to package"
+              echo "错误: 没有找到文件进行打包"
+              find bin/packages -name "*ttyd*" -o -name "*libwebsockets*" | head -20
               exit 1
           fi
 
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Generate release info
+      - name: 生成版本信息
         id: info
         if: steps.compile.outputs.status == 'success'
         run: |
           cd sdk
-          echo "## :mega: ttyd Packages Compilation Report" >> release.txt
-          echo "### Build Information" >> release.txt
-          echo "**Platform**: ${{ matrix.platform }}" >> release.txt
-          echo "**Version Type**: ${{ matrix.ver }}" >> release.txt
-          echo "**Build Date**: $(date)" >> release.txt
+          echo "## 🚀 ttyd 软件包编译报告" >> release.txt
+          echo "### 编译信息" >> release.txt
+          echo "**平台**: ${{ matrix.platform }}" >> release.txt
+          echo "**版本类型**: ${{ matrix.ver }}" >> release.txt
+          echo "**编译日期**: $(date)" >> release.txt
 
-          echo "### Compiled Packages" >> release.txt
-          echo "**Package Name**|**Version**" >> release.txt
+          echo "### 编译的软件包" >> release.txt
+          echo "**包名**|**版本**" >> release.txt
           echo "-|-" >> release.txt
 
-          # Extract version information from Makefiles
+          # 从 Makefiles 提取版本信息
           if [ -f "feeds/custom_packages/package/libwebsockets-full/Makefile" ]; then
               version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/libwebsockets-full/Makefile | tr -d ' ')
               echo "**libwebsockets-full**|**$version**" >> release.txt
@@ -289,14 +367,14 @@ jobs:
               echo "**luci-app-ttyd**|**$version**" >> release.txt
           fi
 
-          echo "### File List" >> release.txt
-          echo "```" >> release.txt
+          echo "### 文件列表" >> release.txt
+          echo "\`\`\`" >> release.txt
           ls -la tmp_upload/ >> release.txt
-          echo "```" >> release.txt
+          echo "\`\`\`" >> release.txt
 
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Upload artifacts
+      - name: 上传制品
         uses: actions/upload-artifact@v4
         if: steps.info.outputs.status == 'success'
         with:
@@ -304,14 +382,18 @@ jobs:
           path: ${{ env.FIRMWARE }}/upload/*
           retention-days: 30
 
-      - name: Create GitHub Release
+      - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
-        if: steps.info.outputs.status == 'success' && github.ref == 'refs/heads/main'
+        if: steps.info.outputs.status == 'success'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ttyd-${{ matrix.ver }}-${{ matrix.platform }}-$(date +%Y%m%d-%H%M)
+          # 修复标签名问题 - 使用静态标签名
+          tag_name: ttyd-packages-${{ matrix.ver }}-${{ matrix.platform }}
+          name: "TTYD Packages ${{ matrix.ver }} - ${{ matrix.platform }}"
           body_path: ${{ env.FIRMWARE }}/release.txt
-          files: ${{ env.FIRMWARE }}/upload/*
+          files: ${{ env.FIRMWARE }}/upload/ttyd_packages_${{ matrix.ver }}_${{ matrix.platform }}.zip
           draft: false
           prerelease: false
+          # 如果标签已存在则更新
+          replace_existing: true
