@@ -2,7 +2,7 @@
 # Copyright (c) 2022-2025 SMALLPROGRAM <https://github.com/smallprogram>
 # Description: Auto compile ttyd with openwrt sdk
 #
-name: "Auto compile ttyd with openwrt sdk"
+name: "Auto compile ttyd with openwrt 22.03.5 sdk"
 
 # 修复权限问题
 permissions:
