@@ -1,0 +1,215 @@
+name: Auto compile TTYD with OpenWrt SDK
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: 'false'
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  job_check:
+    name: Check Version
+    runs-on: ubuntu-latest
+    outputs:
+      ttyd_version: ${{ steps.check_version.outputs.latest_version }}
+      has_update: ${{ steps.check_version.outputs.has_update }}
+      prerelease: ${{ steps.check_version.outputs.prerelease }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+
+      - name: Check version
+        id: check_version
+        env:
+          url_tags: https://api.github.com/repos/${{ github.repository }}/releases/latest
+        run: |
+          if [ -f "package/ttyd/Makefile" ]; then
+            cd package/ttyd
+            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' Makefile | tr -d ' ')
+          elif [ -f "ttyd/Makefile" ]; then
+            cd ttyd
+            ttyd_version=$(awk -F '=' '/PKG_VERSION:=/{v=$2} /PKG_RELEASE:=/{r=$2} END{print v"-"r}' Makefile | tr -d ' ')
+          else
+            ttyd_version=$(date +%Y%m%d-%H%M%S)
+          fi
+
+          echo "latest_version=$ttyd_version" >> $GITHUB_OUTPUT
+          prerelease=$([ "${{ github.ref_name }}" == "main" ] && echo false || echo true)
+          echo "prerelease=$prerelease" >> $GITHUB_OUTPUT
+
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          else
+            remote_latest_version=$(wget -qO- -t1 -T2 ${url_tags} | jq -r '.tag_name')
+            if [ -z "$remote_latest_version" ] || [ "$remote_latest_version" = "null" ]; then
+              echo "has_update=true" >> $GITHUB_OUTPUT
+            elif [ "$ttyd_version" = "$remote_latest_version" ]; then
+              echo "has_update=false" >> $GITHUB_OUTPUT
+            else
+              echo "has_update=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Prepare release info
+        if: steps.check_version.outputs.has_update == 'true'
+        run: |
+          echo "## :mega: TTYD Auto Build Update" > release.txt
+          echo "**TTYD Version:** ${{ steps.check_version.outputs.latest_version }}" >> release.txt
+          echo "**Build Date:** $(date '+%Y-%m-%d %H:%M:%S')" >> release.txt
+          echo "**Build Arch:** Multiple architectures" >> release.txt
+
+      - name: Generate new tag
+        if: steps.check_version.outputs.has_update == 'true' && github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.check_version.outputs.latest_version }}
+          target_commitish: ${{ github.ref_name }}
+          prerelease: ${{ steps.check_version.outputs.prerelease }}
+          body_path: release.txt
+
+  job_auto_compile:
+    needs: job_check
+    if: needs.job_check.outputs.has_update == 'true'
+    runs-on: ubuntu-latest
+    name: Build TTYD (${{ matrix.ver }}-${{ matrix.platform }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x86_64
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: ipk
+          - platform: aarch64_cortex-a53
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: ipk
+          - platform: aarch64_cortex-a72
+            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ver: ipk
+          - platform: x86_64
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: apk
+          - platform: aarch64_cortex-a53
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa53/openwrt-sdk-mvebu-cortexa53_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: apk
+          - platform: aarch64_cortex-a72
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/mvebu/cortexa72/openwrt-sdk-mvebu-cortexa72_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            ver: apk
+
+    steps:
+      - uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential gawk gcc-multilib flex git gettext libncurses-dev \
+            libssl-dev python3-distutils zlib1g-dev unzip rsync curl jq tree zstd
+
+      - name: Download SDK
+        run: |
+          wget -q --show-progress ${{ matrix.url_sdk }}
+          file=$(basename ${{ matrix.url_sdk }})
+          mkdir sdk
+          if [[ $file == *.tar.xz ]]; then
+            tar -xJf $file -C sdk --strip-components=1
+          else
+            tar --zstd -xf $file -C sdk --strip-components=1
+          fi
+
+      - name: Prepare logs and workspace
+        run: |
+          mkdir -p build_logs upload/packages
+
+      - name: Fix feeds and update
+        run: |
+          cd sdk
+          sed -i 's/git.openwrt.org/github.com\/openwrt/' feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Remove existing built-in TTYD
+        run: |
+          cd sdk
+          rm -rf feeds/packages/utils/ttyd
+          rm -rf feeds/luci/applications/luci-app-ttyd
+
+      - name: Copy custom packages
+        run: |
+          cd sdk
+          mkdir -p package/custom
+          cp -r $GITHUB_WORKSPACE/package/* package/custom/ || true
+          tree package/custom || true
+
+      - name: Generate minimal .config
+        run: |
+          cd sdk
+          echo "CONFIG_ALL=n" > .config
+          echo "CONFIG_SIGNED_PACKAGES=n" >> .config
+          echo "CONFIG_PACKAGE_libuv=y" >> .config
+          echo "CONFIG_PACKAGE_libwebsockets-full=y" >> .config
+          echo "CONFIG_PACKAGE_ttyd=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+          make defconfig
+
+      - name: Build dependencies
+        run: |
+          cd sdk
+          make package/libuv/compile V=s -j$(nproc)
+          make package/libwebsockets-full/compile V=s -j$(nproc)
+
+      - name: Build TTYD
+        run: |
+          cd sdk
+          make package/ttyd/compile V=s -j$(nproc)
+
+      - name: Build LuCI
+        run: |
+          cd sdk
+          make package/luci-app-ttyd/compile V=s -j$(nproc)
+
+      - name: Collect built packages
+        run: |
+          cd sdk
+          find bin -type f \( -name "*.ipk" -o -name "*.apk" \) -exec cp {} upload/packages/ \;
+
+      - name: Create ZIP
+        run: |
+          cd sdk/upload/packages
+          zip -r ../ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip .
+
+      - name: Upload artifacts (logs + packages)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttyd_${{ matrix.platform }}_${{ matrix.ver }}
+          path: sdk/upload
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.job_check.outputs.ttyd_version }}
+          files: |
+            sdk/upload/packages/*.ipk
+            sdk/upload/packages/*.apk
+            sdk/upload/ttyd_${{ matrix.ver }}_${{ matrix.platform }}.zip
