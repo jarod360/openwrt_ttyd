@@ -2,7 +2,7 @@
 # Copyright (c) 2022-2025 SMALLPROGRAM
 # Description: Auto compile ttyd with OpenWrt SDK, OpenSSL 1.1.1 only
 #
-name: "Auto compile ttyd with OpenWrt SDK"
+name: "Auto compile ttyd with OpenWrt 22.03 SDK"
 
 permissions:
   contents: write
@@ -30,40 +30,40 @@ jobs:
       matrix:
         include:
           - platform: x86_64
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/x86/64/openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/x86/64/openwrt-sdk-22.03.5-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_generic
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/rockchip/armv8/openwrt-sdk-24.10.4-rockchip-armv8_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/rockchip/armv8/openwrt-sdk-22.03.5-rockchip-armv8_gcc-11.2.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_cortex-a53
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa53/openwrt-sdk-24.10.4-mvebu-cortexa53_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa53/openwrt-sdk-22.03.5-mvebu-cortexa53_gcc-11.2.0_musl.Linux-x86_64.tar.xz
           - platform: aarch64_cortex-a72
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/mvebu/cortexa72/openwrt-sdk-24.10.4-mvebu-cortexa72_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/mvebu/cortexa72/openwrt-sdk-22.03.5-mvebu-cortexa72_gcc-11.2.0_musl.Linux-x86_64.tar.xz
           - platform: arm_cortex-a7_neon-vfpv4
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/sunxi/cortexa7/openwrt-sdk-24.10.4-sunxi-cortexa7_gcc-13.3.0_musl_eabi.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/sunxi/cortexa7/openwrt-sdk-22.03.5-sunxi-cortexa7_gcc-11.2.0_musl_eabi.Linux-x86_64.tar.xz
           - platform: mips_24kc
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ath79/generic/openwrt-sdk-24.10.4-ath79-generic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ath79/generic/openwrt-sdk-22.03.5-ath79-generic_gcc-11.2.0_musl.Linux-x86_64.tar.xz
           - platform: mipsel_24kc
-            url_sdk: https://downloads.openwrt.org/releases/24.10.4/targets/ramips/rt288x/openwrt-sdk-24.10.4-ramips-rt288x_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/releases/22.03.5/targets/ramips/rt288x/openwrt-sdk-22.03.5-ramips-rt288x_gcc-11.2.0_musl.Linux-x86_64.tar.xz
 
     steps:
-
       - name: 初始化环境
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y build-essential ccache git wget curl python3 python3-pip \
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install -y build-essential ccache git wget curl python3 python3-pip \
             libncurses-dev libssl-dev zlib1g-dev libelf-dev asciidoc binutils bison flex \
             gawk gettext libtool liblzma-dev patch unzip xz-utils file
-          sudo apt-get clean
+          sudo -E apt-get -qq clean
 
       - name: 下载 SDK
         run: |
           wget ${{ matrix.url_sdk }}
           file_name=$(basename ${{ matrix.url_sdk }})
-          mkdir sdk
-          cd sdk
+          mkdir sdk && cd sdk
           if [[ $file_name == *.tar.xz ]]; then
             tar -xJf ../$file_name --strip-components=1
-          else
+          elif [[ $file_name == *.tar.zst ]]; then
             tar --zstd -x -f ../$file_name --strip-components=1
+          else
+            echo "不支持的文件格式: $file_name"; exit 1
           fi
 
       - name: 删除 SDK 自带包并添加自定义 feeds
@@ -76,7 +76,6 @@ jobs:
 
       - name: 配置 .config
         run: |
-          cd sdk
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_PACKAGE_openssl=m" >> .config
           echo "CONFIG_PACKAGE_openssl3=n" >> .config
@@ -90,44 +89,39 @@ jobs:
           echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
           make defconfig
 
-      - name: 编译 OpenSSL 1.1.1
+      - name: 编译 SDK OpenSSL 1.1.1
         run: |
-          cd sdk
           make package/libs/openssl/compile -j$(nproc) V=sc
 
       - name: 强制 libwebsockets-full 链接 OpenSSL 1.1.1
         run: |
-          cd sdk
           sed -i 's/DEPENDS:=openssl.*/DEPENDS:=+openssl/' package/feeds/custom_packages/libwebsockets-full/Makefile
 
       - name: 编译自定义包
         run: |
-          cd sdk
           for pkg in libuv libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
             make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
           done
           for lang_pkg in luci-i18n-ttyd-zh-cn luci-i18n-diskman-zh-cn; do
-            make package/feeds/luci/$lang_pkg/compile -j$(nproc) V=sc || true
+            make package/feeds/luci/$lang_pkg/compile -j$(nproc) V=sc || echo "⚠ $lang_pkg 编译失败，继续..."
           done
 
       - name: 打包输出
         run: |
-          cd sdk
-          mkdir -p tmp_upload ../upload
+          mkdir -p tmp_upload upload
           cp bin/packages/*/*/{openssl*,libuv*,libwebsockets*,ttyd*,luci-app*,luci-i18n*} tmp_upload/ || true
-          zip -jr ../upload/packages_${{ matrix.platform }}.zip tmp_upload/*
-          echo "FIRMWARE=$PWD/../upload" >> $GITHUB_ENV
+          zip -jr upload/packages_${{ matrix.platform }}.zip tmp_upload/*
+          echo "FIRMWARE=$PWD/upload" >> $GITHUB_ENV
 
       - name: 生成 Release 信息
         run: |
-          cd sdk
-          echo "## OpenWrt ${{ matrix.platform }} Packages" > ../upload/release_${{ matrix.platform }}.md
-          echo "- 平台: ${{ matrix.platform }}" >> ../upload/release_${{ matrix.platform }}.md
-          echo "- 编译日期: $(date)" >> ../upload/release_${{ matrix.platform }}.md
-          echo "- 包含: openssl 1.1.1, libuv, libwebsockets-full, ttyd, luci-app-ttyd, luci-app-diskman, luci-i18n-zh-cn" >> ../upload/release_${{ matrix.platform }}.md
-          echo "\`\`\`" >> ../upload/release_${{ matrix.platform }}.md
-          ls -la tmp_upload/ >> ../upload/release_${{ matrix.platform }}.md
-          echo "\`\`\`" >> ../upload/release_${{ matrix.platform }}.md
+          echo "## OpenWrt ${{ matrix.platform }} Packages" > upload/release_${{ matrix.platform }}.md
+          echo "- 平台: ${{ matrix.platform }}" >> upload/release_${{ matrix.platform }}.md
+          echo "- 编译日期: $(date)" >> upload/release_${{ matrix.platform }}.md
+          echo "- 包含: openssl 1.1.1, libuv, libwebsockets-full, ttyd, luci-app-ttyd, luci-app-diskman, luci-i18n-zh-cn" >> upload/release_${{ matrix.platform }}.md
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.md
+          ls -la tmp_upload/ >> upload/release_${{ matrix.platform }}.md
+          echo "\`\`\`" >> upload/release_${{ matrix.platform }}.md
 
       - name: 上传 Artifact
         uses: actions/upload-artifact@v4
