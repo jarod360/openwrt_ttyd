@@ -11,6 +11,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+  packages: read
+
 env:
   TZ: Asia/Shanghai
   PACKAGE_NAMES: "libuv libwebsockets-full ttyd luci-app-ttyd"
