@@ -1,6 +1,6 @@
 --- a/utils.c
 +++ b/utils.c
-@@ -1,6 +1,48 @@
+@@ -1,6 +1,54 @@
 +#include <string.h>
 +#include <sys/ioctl.h>
 +#include <net/if.h>
@@ -51,7 +51,18 @@
 +        return -1; 
 +    }
 +
-+    /* continue original logic, e.g., get IP address */
++    /* get IP address */
++    memset(&ifr, 0, sizeof(ifr));
++    strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
++
++    if (ioctl(s, SIOCGIFADDR, &ifr) < 0) {
++        close(s);
++        return -1;
++    }
++
++    if (in)
++        *in = ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr;
++
 +    close(s);
 +    return 0;
  }
