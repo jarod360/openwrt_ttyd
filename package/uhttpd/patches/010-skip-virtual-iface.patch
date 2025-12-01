@@ -1,5 +1,5 @@
---- a/uhttpd-2023-06-25-34a8a74d/utils.c
-+++ b/uhttpd-2023-06-25-34a8a74d/utils.c
+--- a/utils.c
++++ b/utils.c
 @@ -185,6 +185,42 @@ int uh_getifaddr(const char *ifname, struct in_addr *in)
         int rv = -1;
         int s;
