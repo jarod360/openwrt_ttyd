@@ -1,5 +1,7 @@
---- a/utils.c
-+++ b/utils.c
+*** utils.c.orig	2025-12-01 00:00:00.000000000 +0800
+--- utils.c
+*** utils.c.orig	2025-12-01 00:00:00.000000000 +0800
+--- utils.c
 @@ -184,6 +184,25 @@
  int uh_getifaddr(const char *ifname, struct in_addr *in)
  {
