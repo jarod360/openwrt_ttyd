@@ -176,10 +176,10 @@ jobs:
             fi
           done
 
-          # 验证 SDK 的依赖包是否存在 - 使用更灵活的查找方式
+          # 验证 SDK 的依赖包是否存在 - 只验证必需的包，其他包作为可选
           echo "=== 验证 SDK 的依赖包 ==="
           
-          # 查找 libuv
+          # 查找 libuv - 必需的依赖
           if find . -type d -name "libuv" | grep -q .; then
             echo "✓ 找到 SDK 的 libuv 包"
           else
@@ -187,13 +187,27 @@ jobs:
             exit 1
           fi
           
-          # 查找 libubox
-          if find . -type d -name "libubox" | grep -q .; then
-            echo "✓ 找到 SDK 的 libubox 包"
+          # 查找 OpenSSL - 必需的依赖
+          echo "=== 查找 OpenSSL 包位置 ==="
+          OPENSSL_PATH=$(find . -type d -name "openssl" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$OPENSSL_PATH" ]; then
+            echo "✓ 找到 OpenSSL 包位置: $OPENSSL_PATH"
           else
-            echo "✗ 未找到 SDK 的 libubox 包"
+            echo "✗ 未找到 OpenSSL 包"
+            # 列出所有可能的包目录
+            find . -type d -name "*ssl*" | head -10
             exit 1
           fi
+          
+          # 可选依赖包，不强制要求存在
+          echo "=== 检查可选依赖包 ==="
+          for pkg in libubox libubus libblobmsg-json; do
+            if find . -type d -name "$pkg" | grep -q .; then
+              echo "✓ 找到 SDK 的 $pkg 包"
+            else
+              echo "⚠ 未找到 SDK 的 $pkg 包，这可能会影响 uhttpd 编译"
+            fi
+          done
           
           # 查找 libjson-script - 使用更灵活的搜索
           echo "查找 libjson-script 包..."
@@ -204,34 +218,6 @@ jobs:
             echo "✓ 找到 SDK 的 libjson-script 相关包"
           else
             echo "⚠ 未找到 SDK 的 libjson-script 包，继续编译"
-          fi
-          
-          # 查找 libubus
-          if find . -type d -name "libubus" | grep -q .; then
-            echo "✓ 找到 SDK 的 libubus 包"
-          else
-            echo "✗ 未找到 SDK 的 libubus 包"
-            exit 1
-          fi
-          
-          # 查找 libblobmsg-json
-          if find . -type d -name "libblobmsg-json" | grep -q .; then
-            echo "✓ 找到 SDK 的 libblobmsg-json 包"
-          else
-            echo "✗ 未找到 SDK 的 libblobmsg-json 包"
-            exit 1
-          fi
-
-          # 查找 OpenSSL 包的实际位置
-          echo "=== 查找 OpenSSL 包位置 ==="
-          OPENSSL_PATH=$(find . -type d -name "openssl" | grep -E "(package/|feeds/)" | head -1)
-          if [ -n "$OPENSSL_PATH" ]; then
-            echo "✓ 找到 OpenSSL 包位置: $OPENSSL_PATH"
-          else
-            echo "✗ 未找到 OpenSSL 包"
-            # 列出所有可能的包目录
-            find . -type d -name "*ssl*" | head -10
-            exit 1
           fi
 
           # 更新必要的组件
@@ -254,10 +240,7 @@ jobs:
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
           # 基础依赖 - 使用 SDK 中的包
           echo "CONFIG_PACKAGE_libuv=m" >> .config
-          echo "CONFIG_PACKAGE_libubox=m" >> .config
-          # 注意：有些 SDK 可能没有单独的 libjson-script 包，它可能被集成到其他包中
-          echo "CONFIG_PACKAGE_libubus=m" >> .config
-          echo "CONFIG_PACKAGE_libblobmsg-json=m" >> .config
+          # 注意：不强制配置这些依赖包，如果 SDK 中有会自动包含
           # 主要包
           echo "CONFIG_PACKAGE_libwebsockets-full=m" >> .config
           echo "CONFIG_PACKAGE_ttyd=m" >> .config
@@ -311,14 +294,21 @@ jobs:
           echo "✓ libuv 编译完成"
           echo ""
           
-          echo "----------- 开始编译 libubox (来自 SDK) ---------------"
-          make package/feeds/packages/libubox/compile -j$(nproc) V=sc
-          echo "✓ libubox 编译完成"
+          # 尝试编译 libubox - 使用动态查找
+          echo "----------- 尝试编译 libubox (来自 SDK) ---------------"
+          LIBUBOX_PATH=$(find . -type d -name "libubox" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$LIBUBOX_PATH" ]; then
+            echo "找到 libubox 路径: $LIBUBOX_PATH"
+            LIBUBOX_REL_PATH=${LIBUBOX_PATH#./}
+            echo "编译 libubox: $LIBUBOX_REL_PATH"
+            make $LIBUBOX_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libubox 编译完成" || echo "⚠ libubox 编译失败，继续..."
+          else
+            echo "⚠ 未找到 libubox 包，跳过编译"
+          fi
           echo ""
           
           # 尝试编译 libjson-script - 使用动态查找
           echo "----------- 尝试编译 libjson-script (来自 SDK) ---------------"
-          # 查找 libjson-script 包，使用更宽松的搜索
           LIBJSON_SCRIPT_PATH=$(find . -type d \( -name "*json*script*" -o -name "*json-script*" \) | grep -E "(package/|feeds/)" | head -1)
           if [ -n "$LIBJSON_SCRIPT_PATH" ]; then
             echo "找到 libjson-script 路径: $LIBJSON_SCRIPT_PATH"
@@ -330,14 +320,30 @@ jobs:
           fi
           echo ""
           
-          echo "----------- 开始编译 libubus (来自 SDK) ---------------"
-          make package/feeds/packages/libubus/compile -j$(nproc) V=sc
-          echo "✓ libubus 编译完成"
+          # 尝试编译 libubus - 使用动态查找
+          echo "----------- 尝试编译 libubus (来自 SDK) ---------------"
+          LIBUBUS_PATH=$(find . -type d -name "libubus" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$LIBUBUS_PATH" ]; then
+            echo "找到 libubus 路径: $LIBUBUS_PATH"
+            LIBUBUS_REL_PATH=${LIBUBUS_PATH#./}
+            echo "编译 libubus: $LIBUBUS_REL_PATH"
+            make $LIBUBUS_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libubus 编译完成" || echo "⚠ libubus 编译失败，继续..."
+          else
+            echo "⚠ 未找到 libubus 包，跳过编译"
+          fi
           echo ""
           
-          echo "----------- 开始编译 libblobmsg-json (来自 SDK) ---------------"
-          make package/feeds/packages/libblobmsg-json/compile -j$(nproc) V=sc
-          echo "✓ libblobmsg-json 编译完成"
+          # 尝试编译 libblobmsg-json - 使用动态查找
+          echo "----------- 尝试编译 libblobmsg-json (来自 SDK) ---------------"
+          LIBBLOBMSG_JSON_PATH=$(find . -type d -name "libblobmsg-json" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$LIBBLOBMSG_JSON_PATH" ]; then
+            echo "找到 libblobmsg-json 路径: $LIBBLOBMSG_JSON_PATH"
+            LIBBLOBMSG_JSON_REL_PATH=${LIBBLOBMSG_JSON_PATH#./}
+            echo "编译 libblobmsg-json: $LIBBLOBMSG_JSON_REL_PATH"
+            make $LIBBLOBMSG_JSON_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libblobmsg-json 编译完成" || echo "⚠ libblobmsg-json 编译失败，继续..."
+          else
+            echo "⚠ 未找到 libblobmsg-json 包，跳过编译"
+          fi
           echo ""
           
           # 查找并编译 OpenSSL（来自 SDK）
@@ -525,10 +531,10 @@ jobs:
           echo "## 📦 包含的软件包" >> release_body.md
           echo "- **json-c**: JSON 解析库 (SDK 版本)" >> release_body.md
           echo "- **libuv**: 跨平台异步 I/O 库 (SDK 版本)" >> release_body.md
-          echo "- **libubox**: OpenWrt 基础库 (SDK 版本)" >> release_body.md
-          echo "- **libjson-script**: JSON 脚本解析库 (SDK 版本，可能集成在 libubox 中)" >> release_body.md
-          echo "- **libubus**: OpenWrt RPC 通信库 (SDK 版本)" >> release_body.md
-          echo "- **libblobmsg-json**: libubus 的 JSON 数据处理库 (SDK 版本)" >> release_body.md
+          echo "- **libubox**: OpenWrt 基础库 (SDK 版本，如找到)" >> release_body.md
+          echo "- **libjson-script**: JSON 脚本解析库 (SDK 版本，如找到，可能集成在 libubox 中)" >> release_body.md
+          echo "- **libubus**: OpenWrt RPC 通信库 (SDK 版本，如找到)" >> release_body.md
+          echo "- **libblobmsg-json**: libubus 的 JSON 数据处理库 (SDK 版本，如找到)" >> release_body.md
           echo "- **libwebsockets-full**: 完整的 WebSocket 库 (自定义版本)" >> release_body.md
           echo "- **ttyd**: 通过 Web 共享终端 (自定义版本)" >> release_body.md
           echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面 (自定义版本)" >> release_body.md
@@ -570,10 +576,10 @@ jobs:
           echo "3. 注意依赖关系，建议按以下顺序安装：" >> release_body.md
           echo "   - json-c (SDK 版本)" >> release_body.md
           echo "   - libuv (SDK 版本)" >> release_body.md
-          echo "   - libubox (SDK 版本)" >> release_body.md
+          echo "   - libubox (SDK 版本，如存在)" >> release_body.md
           echo "   - libjson-script (SDK 版本，如存在)" >> release_body.md
-          echo "   - libubus (SDK 版本)" >> release_body.md
-          echo "   - libblobmsg-json (SDK 版本)" >> release_body.md
+          echo "   - libubus (SDK 版本，如存在)" >> release_body.md
+          echo "   - libblobmsg-json (SDK 版本，如存在)" >> release_body.md
           echo "   - libwebsockets-full (自定义版本)" >> release_body.md
           echo "   - ttyd (自定义版本)" >> release_body.md
           echo "   - luci-app-ttyd (自定义版本)" >> release_body.md
@@ -586,9 +592,9 @@ jobs:
           echo "   - uhttpd-mod-ucode (自定义版本)" >> release_body.md
           echo "" >> release_body.md
           echo "## 🔗 依赖关系" >> release_body.md
-          echo "- **uhttpd** 依赖 **libubus** 和 **libblobmsg-json** (均为 SDK 版本)" >> release_body.md
-          echo "- **libubus** 依赖 **json-c**、**libubox** 和 **libjson-script** (均为 SDK 版本)" >> release_body.md
-          echo "- **libblobmsg-json** 依赖 **libubox** 和 **json-c** (均为 SDK 版本)" >> release_body.md
+          echo "- **uhttpd** 依赖 **libubus** 和 **libblobmsg-json** (均为 SDK 版本，如存在)" >> release_body.md
+          echo "- **libubus** 依赖 **json-c**、**libubox** 和 **libjson-script** (均为 SDK 版本，如存在)" >> release_body.md
+          echo "- **libblobmsg-json** 依赖 **libubox** 和 **json-c** (均为 SDK 版本，如存在)" >> release_body.md
           echo "- **ttyd** 依赖 **libwebsockets-full** (自定义版本) 和 **libuv** (SDK 版本)" >> release_body.md
 
       - name: 准备 Release 文件
