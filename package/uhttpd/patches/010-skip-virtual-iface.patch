@@ -1,5 +1,5 @@
---- a/src/utils.c
-+++ b/src/utils.c
+--- a/utils.c
++++ b/utils.c
 @@ -185,6 +185,42 @@ int uh_getifaddr(const char *ifname, struct in_addr *in)
         int rv = -1;
         int s;
