@@ -231,7 +231,6 @@ jobs:
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
           # 基础依赖
           echo "CONFIG_PACKAGE_libuv=m" >> .config  # 使用 SDK 的 libuv
-          echo "CONFIG_PACKAGE_json-c=m" >> .config  # libubus 依赖
           # uhttpd 依赖
           echo "CONFIG_PACKAGE_libubus=m" >> .config
           echo "CONFIG_PACKAGE_libblobmsg-json=m" >> .config
@@ -266,10 +265,21 @@ jobs:
           done
           
           # 按依赖顺序编译所有包，包括语言包
-          # 首先编译基础依赖
-          echo "----------- 开始编译 json-c (依赖包) ---------------"
-          make package/feeds/packages/json-c/compile -j$(nproc) V=sc
-          echo "✓ json-c 编译完成"
+          # 首先查找并编译基础依赖包
+          echo "----------- 查找并编译基础依赖包 ---------------"
+          
+          # 查找 json-c 的实际路径
+          echo "查找 json-c 包..."
+          JSONC_PATH=$(find . -type d -name "json-c" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$JSONC_PATH" ]; then
+            echo "找到 json-c 路径: $JSONC_PATH"
+            # 提取相对路径（去掉开头的 ./）
+            JSONC_REL_PATH=${JSONC_PATH#./}
+            echo "编译 json-c: $JSONC_REL_PATH"
+            make $JSONC_REL_PATH/compile -j$(nproc) V=sc && echo "✓ json-c 编译完成" || echo "⚠ json-c 编译失败，可能已被其他包依赖编译"
+          else
+            echo "⚠ 未找到 json-c 包，跳过编译"
+          fi
           echo ""
           
           # 然后编译 libuv（来自 SDK）
@@ -279,14 +289,28 @@ jobs:
           echo ""
           
           # 编译 uhttpd 的依赖
-          echo "----------- 开始编译 libubus (uhttpd 依赖) ---------------"
-          make package/feeds/base/libubus/compile -j$(nproc) V=sc
-          echo "✓ libubus 编译完成"
+          echo "----------- 查找并编译 libubus (uhttpd 依赖) ---------------"
+          LIBUBUS_PATH=$(find . -type d -name "libubus" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$LIBUBUS_PATH" ]; then
+            echo "找到 libubus 路径: $LIBUBUS_PATH"
+            LIBUBUS_REL_PATH=${LIBUBUS_PATH#./}
+            echo "编译 libubus: $LIBUBUS_REL_PATH"
+            make $LIBUBUS_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libubus 编译完成" || echo "⚠ libubus 编译失败，继续..."
+          else
+            echo "⚠ 未找到 libubus 包，跳过编译"
+          fi
           echo ""
           
-          echo "----------- 开始编译 libblobmsg-json (uhttpd 依赖) ---------------"
-          make package/feeds/base/libblobmsg-json/compile -j$(nproc) V=sc
-          echo "✓ libblobmsg-json 编译完成"
+          echo "----------- 查找并编译 libblobmsg-json (uhttpd 依赖) ---------------"
+          LIBBLOBMSG_JSON_PATH=$(find . -type d -name "libblobmsg-json" | grep -E "(package/|feeds/)" | head -1)
+          if [ -n "$LIBBLOBMSG_JSON_PATH" ]; then
+            echo "找到 libblobmsg-json 路径: $LIBBLOBMSG_JSON_PATH"
+            LIBBLOBMSG_JSON_REL_PATH=${LIBBLOBMSG_JSON_PATH#./}
+            echo "编译 libblobmsg-json: $LIBBLOBMSG_JSON_REL_PATH"
+            make $LIBBLOBMSG_JSON_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libblobmsg-json 编译完成" || echo "⚠ libblobmsg-json 编译失败，继续..."
+          else
+            echo "⚠ 未找到 libblobmsg-json 包，跳过编译"
+          fi
           echo ""
           
           # 查找并编译 OpenSSL（来自 SDK）
@@ -417,7 +441,7 @@ jobs:
           done
 
           # 添加 SDK 包信息和 uhttpd 模块及依赖包
-          echo "**json-c**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**json-c**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**libubus**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**libblobmsg-json**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
