@@ -1,0 +1,45 @@
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -185,6 +185,42 @@ int uh_getifaddr(const char *ifname, struct in_addr *in)
+        int rv = -1;
+        int s;
+
++       /*
++        * Skip virtual / tunnel / docker / loopback / unused interfaces
++        * to avoid "Cannot get device settings: No such device"
++        */
++       if (
++            !strncmp(ifname, "lo", 2)        ||   /* loopback */
++            !strncmp(ifname, "ifb", 3)       ||   /* IFB qdisc */
++            !strncmp(ifname, "gre", 3)       ||   /* GRE tunnel */
++            !strncmp(ifname, "ip6tnl", 6)    ||   /* IPv6 tunnel */
++            !strncmp(ifname, "tun", 3)       ||   /* tun */
++            !strncmp(ifname, "tap", 3)       ||   /* tap */
++            !strncmp(ifname, "docker", 6)    ||   /* docker bridge */
++            !strncmp(ifname, "veth", 4)      ||   /* docker veth */
++            !strncmp(ifname, "br-", 3)       ||   /* docker bridge */
++            !strncmp(ifname, "ppp", 3)       ||   /* ppp */
++            !strncmp(ifname, "wg", 2)        ||   /* wireguard */
++            !strncmp(ifname, "sit", 3)       ||   /* sit tunnel */
++            !strncmp(ifname, "ipip", 4)          /* ipip tunnel */
++          ) {
++               return -1;
++       }
++
++       /* get iface flags */
++       memset(&ifr, 0, sizeof(ifr));
++       strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
++
++       if ((s = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
++               return -1;
++
++       if (ioctl(s, SIOCGIFFLAGS, &ifr) < 0) {
++               close(s);
++               return -1;
++       }
++
++       if (!(ifr.ifr_flags & IFF_UP)) { close(s); return -1; }
++
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+
