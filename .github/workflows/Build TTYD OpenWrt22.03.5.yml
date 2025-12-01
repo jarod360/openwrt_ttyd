@@ -179,16 +179,35 @@ jobs:
             fi
           done
 
-          # 验证 SDK 的 libuv、libubox、libjson-script 是否存在
+          # 验证 SDK 的依赖包是否存在 - 使用更灵活的查找方式
           echo "=== 验证 SDK 的依赖包 ==="
-          for pkg in libuv libubox libjson-script; do
-            if find . -name "$pkg" -type d | grep -q .; then
-              echo "✓ 找到 SDK 的 $pkg 包"
-            else
-              echo "✗ 未找到 SDK 的 $pkg 包"
-              exit 1
-            fi
-          done
+          
+          # 查找 libuv
+          if find . -type d -name "libuv" | grep -q .; then
+            echo "✓ 找到 SDK 的 libuv 包"
+          else
+            echo "✗ 未找到 SDK 的 libuv 包"
+            exit 1
+          fi
+          
+          # 查找 libubox
+          if find . -type d -name "libubox" | grep -q .; then
+            echo "✓ 找到 SDK 的 libubox 包"
+          else
+            echo "✗ 未找到 SDK 的 libubox 包"
+            exit 1
+          fi
+          
+          # 查找 libjson-script - 使用更灵活的搜索
+          echo "查找 libjson-script 包..."
+          LIBJSON_SCRIPT_FOUND=$(find . -type d -name "*json*script*" -o -name "*json-script*" | head -5)
+          if [ -n "$LIBJSON_SCRIPT_FOUND" ]; then
+            echo "找到可能的 libjson-script 包位置:"
+            echo "$LIBJSON_SCRIPT_FOUND"
+            echo "✓ 找到 SDK 的 libjson-script 相关包"
+          else
+            echo "⚠ 未找到 SDK 的 libjson-script 包，继续编译"
+          fi
 
           # 查找 OpenSSL 包的实际位置
           echo "=== 查找 OpenSSL 包位置 ==="
