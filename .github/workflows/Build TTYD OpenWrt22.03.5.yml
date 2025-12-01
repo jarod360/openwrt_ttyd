@@ -4,6 +4,7 @@
 #
 name: "Auto compile ttyd with openwrt 22.03.5 sdk"
 
+# 修复权限问题
 permissions:
   contents: write
 
@@ -94,14 +95,16 @@ jobs:
           
           # 使用 find 命令搜索相关包的位置
           echo "搜索相关包文件..."
-          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" -o -name "*uhttpd*" | head -40
+          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" -o -name "*uhttpd*" | head -30
           
-          # 删除我们需要自定义的包，包括 uhttpd 相关包
+          # 只删除我们需要自定义的包，保留 SDK 中的依赖包
           echo "开始删除包..."
           for dir in \
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
             "package/feeds/packages/uhttpd" \
+            "package/feeds/packages/libubus" \
+            "package/feeds/packages/libblobmsg-json" \
             "package/feeds/luci/luci-app-ttyd" \
             "package/feeds/luci/luci-app-diskman" \
             "package/feeds/base/ttyd" \
@@ -132,7 +135,7 @@ jobs:
           # 再次搜索确认删除结果
           echo "=== 确认删除结果 ==="
           echo "剩余相关目录:"
-          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*uhttpd*" \) | head -25
+          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*uhttpd*" \) | head -20
           
           # 更新 feeds 到 github 源
           sed -i \
@@ -176,14 +179,16 @@ jobs:
             fi
           done
 
-          # 验证 SDK 的 libuv 是否存在
-          echo "=== 验证 SDK 的 libuv ==="
-          if find . -name "libuv" -type d | grep -q .; then
-            echo "✓ 找到 SDK 的 libuv 包"
-          else
-            echo "✗ 未找到 SDK 的 libuv 包"
-            exit 1
-          fi
+          # 验证 SDK 的 libuv、libubox、libjson-script 是否存在
+          echo "=== 验证 SDK 的依赖包 ==="
+          for pkg in libuv libubox libjson-script; do
+            if find . -name "$pkg" -type d | grep -q .; then
+              echo "✓ 找到 SDK 的 $pkg 包"
+            else
+              echo "✗ 未找到 SDK 的 $pkg 包"
+              exit 1
+            fi
+          done
 
           # 查找 OpenSSL 包的实际位置
           echo "=== 查找 OpenSSL 包位置 ==="
@@ -215,9 +220,8 @@ jobs:
           echo "CONFIG_ALL=n" >> .config
           echo "CONFIG_AUTOREMOVE=n" >> .config
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
-          # 基础依赖
-          echo "CONFIG_PACKAGE_libuv=m" >> .config  # 使用 SDK 的 libuv
-          # uhttpd 依赖链
+          # 基础依赖 - 使用 SDK 中的包
+          echo "CONFIG_PACKAGE_libuv=m" >> .config
           echo "CONFIG_PACKAGE_libubox=m" >> .config
           echo "CONFIG_PACKAGE_libjson-script=m" >> .config
           echo "CONFIG_PACKAGE_libubus=m" >> .config
@@ -253,8 +257,8 @@ jobs:
           done
           
           # 按依赖顺序编译所有包，包括语言包
-          # 首先查找并编译基础依赖包
-          echo "----------- 查找并编译基础依赖包 ---------------"
+          # 首先查找并编译基础依赖包（来自 SDK）
+          echo "----------- 查找并编译基础依赖包 (来自 SDK) ---------------"
           
           # 查找 json-c 的实际路径
           echo "查找 json-c 包..."
@@ -269,60 +273,30 @@ jobs:
           fi
           echo ""
           
-          # 然后编译 libuv（来自 SDK）
+          # 编译 SDK 中的基础依赖包
           echo "----------- 开始编译 libuv (来自 SDK) ---------------"
           make package/feeds/packages/libuv/compile -j$(nproc) V=sc
           echo "✓ libuv 编译完成"
           echo ""
           
-          # 编译 libubox 依赖链
-          echo "----------- 查找并编译 libubox (uhttpd 依赖链) ---------------"
-          LIBUBOX_PATH=$(find . -type d -name "libubox" | grep -E "(package/|feeds/)" | head -1)
-          if [ -n "$LIBUBOX_PATH" ]; then
-            echo "找到 libubox 路径: $LIBUBOX_PATH"
-            LIBUBOX_REL_PATH=${LIBUBOX_PATH#./}
-            echo "编译 libubox: $LIBUBOX_REL_PATH"
-            make $LIBUBOX_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libubox 编译完成" || echo "⚠ libubox 编译失败，继续..."
-          else
-            echo "⚠ 未找到 libubox 包，跳过编译"
-          fi
+          echo "----------- 开始编译 libubox (来自 SDK) ---------------"
+          make package/feeds/packages/libubox/compile -j$(nproc) V=sc
+          echo "✓ libubox 编译完成"
           echo ""
           
-          echo "----------- 查找并编译 libjson-script (uhttpd 依赖链) ---------------"
-          LIBJSON_SCRIPT_PATH=$(find . -type d -name "libjson-script" | grep -E "(package/|feeds/)" | head -1)
-          if [ -n "$LIBJSON_SCRIPT_PATH" ]; then
-            echo "找到 libjson-script 路径: $LIBJSON_SCRIPT_PATH"
-            LIBJSON_SCRIPT_REL_PATH=${LIBJSON_SCRIPT_PATH#./}
-            echo "编译 libjson-script: $LIBJSON_SCRIPT_REL_PATH"
-            make $LIBJSON_SCRIPT_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libjson-script 编译完成" || echo "⚠ libjson-script 编译失败，继续..."
-          else
-            echo "⚠ 未找到 libjson-script 包，跳过编译"
-          fi
+          echo "----------- 开始编译 libjson-script (来自 SDK) ---------------"
+          make package/feeds/packages/libjson-script/compile -j$(nproc) V=sc
+          echo "✓ libjson-script 编译完成"
           echo ""
           
-          # 编译 uhttpd 的其他依赖
-          echo "----------- 查找并编译 libubus (uhttpd 依赖) ---------------"
-          LIBUBUS_PATH=$(find . -type d -name "libubus" | grep -E "(package/|feeds/)" | head -1)
-          if [ -n "$LIBUBUS_PATH" ]; then
-            echo "找到 libubus 路径: $LIBUBUS_PATH"
-            LIBUBUS_REL_PATH=${LIBUBUS_PATH#./}
-            echo "编译 libubus: $LIBUBUS_REL_PATH"
-            make $LIBUBUS_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libubus 编译完成" || echo "⚠ libubus 编译失败，继续..."
-          else
-            echo "⚠ 未找到 libubus 包，跳过编译"
-          fi
+          echo "----------- 开始编译 libubus (来自 SDK) ---------------"
+          make package/feeds/packages/libubus/compile -j$(nproc) V=sc
+          echo "✓ libubus 编译完成"
           echo ""
           
-          echo "----------- 查找并编译 libblobmsg-json (uhttpd 依赖) ---------------"
-          LIBBLOBMSG_JSON_PATH=$(find . -type d -name "libblobmsg-json" | grep -E "(package/|feeds/)" | head -1)
-          if [ -n "$LIBBLOBMSG_JSON_PATH" ]; then
-            echo "找到 libblobmsg-json 路径: $LIBBLOBMSG_JSON_PATH"
-            LIBBLOBMSG_JSON_REL_PATH=${LIBBLOBMSG_JSON_PATH#./}
-            echo "编译 libblobmsg-json: $LIBBLOBMSG_JSON_REL_PATH"
-            make $LIBBLOBMSG_JSON_REL_PATH/compile -j$(nproc) V=sc && echo "✓ libblobmsg-json 编译完成" || echo "⚠ libblobmsg-json 编译失败，继续..."
-          else
-            echo "⚠ 未找到 libblobmsg-json 包，跳过编译"
-          fi
+          echo "----------- 开始编译 libblobmsg-json (来自 SDK) ---------------"
+          make package/feeds/packages/libblobmsg-json/compile -j$(nproc) V=sc
+          echo "✓ libblobmsg-json 编译完成"
           echo ""
           
           # 查找并编译 OpenSSL（来自 SDK）
@@ -379,13 +353,13 @@ jobs:
           mkdir -p tmp_upload
           shopt -s nullglob 
           
-          # 查找并复制所有编译的包，包括语言包、libuv、json-c 和 uhttpd 相关依赖包
-          for src_dir in bin/packages/*/{packages,custom_packages,luci,base}; do
+          # 查找并复制所有编译的包，包括语言包、SDK 依赖包和 uhttpd 相关包
+          for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
               [[ -d "$src_dir" ]] || continue
 
               echo "扫描目录: $src_dir"
 
-              # 查找所有相关包，包括依赖包、语言包、libuv 和 uhttpd 相关包
+              # 查找所有相关包，包括 SDK 依赖包、语言包和 uhttpd 相关包
               for prefix in json-c libuv libubox libjson-script libubus libblobmsg-json libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n uhttpd; do
                   for file in "$src_dir"/"$prefix"*; do
                       [[ -f "$file" ]] || continue
@@ -450,13 +424,13 @@ jobs:
             fi
           done
 
-          # 添加 SDK 包信息和 uhttpd 模块及依赖包
-          echo "**json-c**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          # 添加 SDK 包信息和 uhttpd 模块
+          echo "**json-c**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
-          echo "**libubox**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
-          echo "**libjson-script**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
-          echo "**libubus**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
-          echo "**libblobmsg-json**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**libubox**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**libjson-script**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**libubus**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**libblobmsg-json**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**uhttpd-mod-ubus**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**uhttpd-mod-lua**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**uhttpd-mod-ucode**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
@@ -508,22 +482,22 @@ jobs:
           echo "# 🎉 OpenWrt 22.03.5平台 openssl 1.1.x版本多平台软件包编译完成" > release_body.md
           echo "" >> release_body.md
           echo "## 📦 包含的软件包" >> release_body.md
-          echo "- **json-c**: JSON 解析库 (依赖包)" >> release_body.md
-          echo "- **libuv**: 跨平台异步 I/O 库 (来自 SDK)" >> release_body.md
-          echo "- **libubox**: OpenWrt 基础库 (uhttpd 依赖链)" >> release_body.md
-          echo "- **libjson-script**: JSON 脚本解析库 (uhttpd 依赖链)" >> release_body.md
-          echo "- **libubus**: OpenWrt RPC 通信库 (uhttpd 依赖)" >> release_body.md
-          echo "- **libblobmsg-json**: libubus 的 JSON 数据处理库 (uhttpd 依赖)" >> release_body.md
-          echo "- **libwebsockets-full**: 完整的 WebSocket 库" >> release_body.md
-          echo "- **ttyd**: 通过 Web 共享终端" >> release_body.md
-          echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面" >> release_body.md
-          echo "- **luci-app-diskman**: 磁盘管理 LuCI 应用" >> release_body.md
-          echo "- **uhttpd**: 自定义 uHTTPd Web 服务器" >> release_body.md
-          echo "- **uhttpd-mod-ubus**: uHTTPd UBus 支持模块" >> release_body.md
-          echo "- **uhttpd-mod-lua**: uHTTPd Lua 支持模块" >> release_body.md
-          echo "- **uhttpd-mod-ucode**: uHTTPd uCode 支持模块" >> release_body.md
-          echo "- **luci-i18n-ttyd-zh-cn**: ttyd 中文语言包" >> release_body.md
-          echo "- **luci-i18n-diskman-zh-cn**: diskman 中文语言包" >> release_body.md
+          echo "- **json-c**: JSON 解析库 (SDK 版本)" >> release_body.md
+          echo "- **libuv**: 跨平台异步 I/O 库 (SDK 版本)" >> release_body.md
+          echo "- **libubox**: OpenWrt 基础库 (SDK 版本)" >> release_body.md
+          echo "- **libjson-script**: JSON 脚本解析库 (SDK 版本)" >> release_body.md
+          echo "- **libubus**: OpenWrt RPC 通信库 (SDK 版本)" >> release_body.md
+          echo "- **libblobmsg-json**: libubus 的 JSON 数据处理库 (SDK 版本)" >> release_body.md
+          echo "- **libwebsockets-full**: 完整的 WebSocket 库 (自定义版本)" >> release_body.md
+          echo "- **ttyd**: 通过 Web 共享终端 (自定义版本)" >> release_body.md
+          echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面 (自定义版本)" >> release_body.md
+          echo "- **luci-app-diskman**: 磁盘管理 LuCI 应用 (自定义版本)" >> release_body.md
+          echo "- **uhttpd**: 自定义 uHTTPd Web 服务器 (自定义版本)" >> release_body.md
+          echo "- **uhttpd-mod-ubus**: uHTTPd UBus 支持模块 (自定义版本)" >> release_body.md
+          echo "- **uhttpd-mod-lua**: uHTTPd Lua 支持模块 (自定义版本)" >> release_body.md
+          echo "- **uhttpd-mod-ucode**: uHTTPd uCode 支持模块 (自定义版本)" >> release_body.md
+          echo "- **luci-i18n-ttyd-zh-cn**: ttyd 中文语言包 (编译版本)" >> release_body.md
+          echo "- **luci-i18n-diskman-zh-cn**: diskman 中文语言包 (编译版本)" >> release_body.md
           echo "" >> release_body.md
           echo "## 🖥️ 支持的平台" >> release_body.md
           
@@ -553,28 +527,28 @@ jobs:
           echo "1. 下载对应平台的压缩包" >> release_body.md
           echo "2. 解压后通过 opkg 安装所需的 ipk 文件" >> release_body.md
           echo "3. 注意依赖关系，建议按以下顺序安装：" >> release_body.md
-          echo "   - json-c" >> release_body.md
-          echo "   - libuv" >> release_body.md
-          echo "   - libubox" >> release_body.md
-          echo "   - libjson-script" >> release_body.md
-          echo "   - libubus" >> release_body.md
-          echo "   - libblobmsg-json" >> release_body.md
-          echo "   - libwebsockets-full" >> release_body.md
-          echo "   - ttyd" >> release_body.md
-          echo "   - luci-app-ttyd" >> release_body.md
-          echo "   - luci-i18n-ttyd-zh-cn" >> release_body.md
-          echo "   - luci-app-diskman" >> release_body.md
-          echo "   - luci-i18n-diskman-zh-cn" >> release_body.md
-          echo "   - uhttpd" >> release_body.md
-          echo "   - uhttpd-mod-ubus" >> release_body.md
-          echo "   - uhttpd-mod-lua" >> release_body.md
-          echo "   - uhttpd-mod-ucode" >> release_body.md
+          echo "   - json-c (SDK 版本)" >> release_body.md
+          echo "   - libuv (SDK 版本)" >> release_body.md
+          echo "   - libubox (SDK 版本)" >> release_body.md
+          echo "   - libjson-script (SDK 版本)" >> release_body.md
+          echo "   - libubus (SDK 版本)" >> release_body.md
+          echo "   - libblobmsg-json (SDK 版本)" >> release_body.md
+          echo "   - libwebsockets-full (自定义版本)" >> release_body.md
+          echo "   - ttyd (自定义版本)" >> release_body.md
+          echo "   - luci-app-ttyd (自定义版本)" >> release_body.md
+          echo "   - luci-i18n-ttyd-zh-cn (编译版本)" >> release_body.md
+          echo "   - luci-app-diskman (自定义版本)" >> release_body.md
+          echo "   - luci-i18n-diskman-zh-cn (编译版本)" >> release_body.md
+          echo "   - uhttpd (自定义版本)" >> release_body.md
+          echo "   - uhttpd-mod-ubus (自定义版本)" >> release_body.md
+          echo "   - uhttpd-mod-lua (自定义版本)" >> release_body.md
+          echo "   - uhttpd-mod-ucode (自定义版本)" >> release_body.md
           echo "" >> release_body.md
           echo "## 🔗 依赖关系" >> release_body.md
-          echo "- **uhttpd** 依赖 **libubus** 和 **libblobmsg-json**" >> release_body.md
-          echo "- **libubus** 依赖 **json-c**、**libubox** 和 **libjson-script**" >> release_body.md
-          echo "- **libblobmsg-json** 依赖 **libubox** 和 **json-c**" >> release_body.md
-          echo "- **ttyd** 依赖 **libwebsockets-full** 和 **libuv**" >> release_body.md
+          echo "- **uhttpd** 依赖 **libubus** 和 **libblobmsg-json** (均为 SDK 版本)" >> release_body.md
+          echo "- **libubus** 依赖 **json-c**、**libubox** 和 **libjson-script** (均为 SDK 版本)" >> release_body.md
+          echo "- **libblobmsg-json** 依赖 **libubox** 和 **json-c** (均为 SDK 版本)" >> release_body.md
+          echo "- **ttyd** 依赖 **libwebsockets-full** (自定义版本) 和 **libuv** (SDK 版本)" >> release_body.md
 
       - name: 准备 Release 文件
         run: |
