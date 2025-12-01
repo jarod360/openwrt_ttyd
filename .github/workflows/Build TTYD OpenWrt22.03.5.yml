@@ -19,7 +19,7 @@ on:
 env:
   TZ: Asia/Shanghai
   repo: ${{ github.repository }}
-  package_names: "libwebsockets-full ttyd luci-app-ttyd luci-app-diskman"
+  package_names: "libwebsockets-full ttyd luci-app-ttyd luci-app-diskman uthttpd"
 
 jobs:
   job_auto_compile:
@@ -95,28 +95,33 @@ jobs:
           
           # 使用 find 命令搜索相关包的位置
           echo "搜索相关包文件..."
-          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -30
+          find . -type d -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" -o -name "*uhttpd*" | head -30
           
-          # 只删除我们需要自定义的包，保留 SDK 的 libuv
+          # 删除我们需要自定义的包，包括 uhttpd 相关包
           echo "开始删除包..."
           for dir in \
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
+            "package/feeds/packages/uhttpd" \
             "package/feeds/luci/luci-app-ttyd" \
             "package/feeds/luci/luci-app-diskman" \
             "package/feeds/base/ttyd" \
             "package/feeds/base/libwebsockets" \
+            "package/feeds/base/uhttpd" \
             "package/feeds/base/luci-app-ttyd" \
             "package/feeds/base/luci-app-diskman" \
             "package/network/services/ttyd" \
             "package/network/services/libwebsockets" \
+            "package/network/services/uhttpd" \
             "feeds/packages/utils/ttyd" \
             "feeds/packages/libs/libwebsockets" \
+            "feeds/packages/net/uhttpd" \
             "feeds/luci/applications/luci-app-ttyd" \
             "feeds/luci/applications/luci-app-diskman" \
             "feeds/luci/collections/luci" \
             "feeds/base/ttyd" \
             "feeds/base/libwebsockets" \
+            "feeds/base/uhttpd" \
             "feeds/base/luci-app-ttyd" \
             "feeds/base/luci-app-diskman"; do
             if [ -d "$dir" ]; then
@@ -128,7 +133,7 @@ jobs:
           # 再次搜索确认删除结果
           echo "=== 确认删除结果 ==="
           echo "剩余相关目录:"
-          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" \) | head -20
+          find . -type d \( -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*uhttpd*" \) | head -20
           
           # 更新 feeds 到 github 源
           sed -i \
@@ -152,6 +157,7 @@ jobs:
           for dir in \
             "package/feeds/packages/ttyd" \
             "package/feeds/packages/libwebsockets" \
+            "package/feeds/packages/uhttpd" \
             "package/feeds/luci/luci-app-ttyd" \
             "package/feeds/luci/luci-app-diskman"; do
             if [ -d "$dir" ]; then
@@ -162,7 +168,7 @@ jobs:
 
           # 验证我们的包是否存在（只验证我们提供的包）
           echo "=== 验证我们的包 ==="
-          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman uthttpd; do
             if [ -d "feeds/custom_packages/package/$pkg" ]; then
               echo "✓ 找到我们的 $pkg 包"
             else
@@ -204,7 +210,7 @@ jobs:
           cp -f temp_resp/scripts/patch-kernel.sh scripts/
           rm -rf temp_resp
 
-          # 配置编译选项 - 添加语言包支持
+          # 配置编译选项 - 添加语言包支持和 uhttpd 模块
           echo "CONFIG_ALL_NONSHARED=n" > .config
           echo "CONFIG_ALL_KMODS=n" >> .config
           echo "CONFIG_ALL=n" >> .config
@@ -218,6 +224,11 @@ jobs:
           # 添加中文语言包支持
           echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=m" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-diskman-zh-cn=m" >> .config
+          # 添加 uhttpd 及其模块支持
+          echo "CONFIG_PACKAGE_uthttpd=m" >> .config
+          echo "CONFIG_PACKAGE_uhttpd-mod-ubus=m" >> .config
+          echo "CONFIG_PACKAGE_uhttpd-mod-lua=m" >> .config
+          echo "CONFIG_PACKAGE_uhttpd-mod-ucode=m" >> .config
           echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
 
           make defconfig
@@ -230,7 +241,7 @@ jobs:
           
           # 验证当前编译的是我们的包
           echo "=== 验证编译源 ==="
-          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman uthttpd; do
             echo "$pkg 路径:"
             find . -path "*/$pkg/Makefile" | grep -v "feeds/custom_packages" || echo "✓ 只有我们的 $pkg"
           done
@@ -257,7 +268,7 @@ jobs:
           echo ""
           
           # 然后编译我们自定义的包
-          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd uthttpd luci-app-ttyd luci-app-diskman; do
             if [ -d "feeds/custom_packages/package/$pkg" ]; then
                 echo "----------- 开始编译 $pkg ---------------"
                 make package/feeds/custom_packages/$pkg/compile -j$(nproc) V=sc
@@ -268,6 +279,14 @@ jobs:
                 exit 1
             fi
           done
+
+          # 编译 uhttpd 模块（这些模块应该由 uthttpd 包自动生成）
+          echo "----------- 开始编译 uhttpd 模块 ---------------"
+          for module in uhttpd-mod-ubus uhttpd-mod-lua uhttpd-mod-ucode; do
+            echo "编译 $module..."
+            make package/feeds/custom_packages/uthttpd/$module/compile -j$(nproc) V=sc && echo "✓ $module 编译完成" || echo "⚠ $module 编译失败，继续..."
+          done
+          echo ""
 
           # 最后编译语言包
           echo "----------- 开始编译语言包 ---------------"
@@ -289,14 +308,14 @@ jobs:
           mkdir -p tmp_upload
           shopt -s nullglob 
           
-          # 查找并复制所有编译的包，包括语言包和 libuv
+          # 查找并复制所有编译的包，包括语言包、libuv 和 uhttpd 相关包
           for src_dir in bin/packages/*/{packages,custom_packages,luci}; do
               [[ -d "$src_dir" ]] || continue
 
               echo "扫描目录: $src_dir"
 
-              # 查找所有相关包，包括语言包和 libuv
-              for prefix in libuv libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n; do
+              # 查找所有相关包，包括语言包、libuv 和 uhttpd 相关包
+              for prefix in libuv libwebsockets ttyd luci-app-ttyd luci-app-diskman luci-i18n uhttpd uthttpd; do
                   for file in "$src_dir"/"$prefix"*; do
                       [[ -f "$file" ]] || continue
 
@@ -325,7 +344,7 @@ jobs:
               done
           else
               echo "错误: 没有找到文件进行打包"
-              find bin/packages -name "*libuv*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" | head -20
+              find bin/packages -name "*libuv*" -o -name "*ttyd*" -o -name "*libwebsockets*" -o -name "*luci-app-diskman*" -o -name "*luci-i18n*" -o -name "*uhttpd*" | head -20
               exit 1
           fi
 
@@ -348,15 +367,18 @@ jobs:
           echo "-|-" >> upload/release_${{ matrix.platform }}.txt
 
           # 从 Makefiles 提取版本信息 - 我们自定义的包
-          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman; do
+          for pkg in libwebsockets-full ttyd luci-app-ttyd luci-app-diskman uthttpd; do
             if [ -f "feeds/custom_packages/package/$pkg/Makefile" ]; then
                 version=$(awk -F ':=' '/PKG_VERSION:=/{version=$2} /PKG_RELEASE:=/{release=$2} END{print version"-"release}' feeds/custom_packages/package/$pkg/Makefile | tr -d ' ')
                 echo "**$pkg**|**$version**" >> upload/release_${{ matrix.platform }}.txt
             fi
           done
 
-          # 添加 SDK 包信息
+          # 添加 SDK 包信息和 uhttpd 模块
           echo "**libuv**|**SDK 版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**uhttpd-mod-ubus**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**uhttpd-mod-lua**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
+          echo "**uhttpd-mod-ucode**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**luci-i18n-ttyd-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
           echo "**luci-i18n-diskman-zh-cn**|**编译版本**" >> upload/release_${{ matrix.platform }}.txt
 
@@ -410,6 +432,10 @@ jobs:
           echo "- **ttyd**: 通过 Web 共享终端" >> release_body.md
           echo "- **luci-app-ttyd**: ttyd 的 LuCI 界面" >> release_body.md
           echo "- **luci-app-diskman**: 磁盘管理 LuCI 应用" >> release_body.md
+          echo "- **uthttpd**: 自定义 uHTTPd Web 服务器" >> release_body.md
+          echo "- **uhttpd-mod-ubus**: uHTTPd UBus 支持模块" >> release_body.md
+          echo "- **uhttpd-mod-lua**: uHTTPd Lua 支持模块" >> release_body.md
+          echo "- **uhttpd-mod-ucode**: uHTTPd uCode 支持模块" >> release_body.md
           echo "- **luci-i18n-ttyd-zh-cn**: ttyd 中文语言包" >> release_body.md
           echo "- **luci-i18n-diskman-zh-cn**: diskman 中文语言包" >> release_body.md
           echo "" >> release_body.md
@@ -448,6 +474,10 @@ jobs:
           echo "   - luci-i18n-ttyd-zh-cn" >> release_body.md
           echo "   - luci-app-diskman" >> release_body.md
           echo "   - luci-i18n-diskman-zh-cn" >> release_body.md
+          echo "   - uthttpd" >> release_body.md
+          echo "   - uhttpd-mod-ubus" >> release_body.md
+          echo "   - uhttpd-mod-lua" >> release_body.md
+          echo "   - uhttpd-mod-ucode" >> release_body.md
 
       - name: 准备 Release 文件
         run: |
